@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { getPrisma } from '../db/prisma.js';
 import { executeScan } from '../services/scan.service.js';
 import { AppError, asyncHandler } from '../utils/errors.js';
 
@@ -50,30 +49,4 @@ export const createScan = asyncHandler(async (req, res) => {
   } finally {
     clearInterval(heartbeat);
   }
-});
-
-export const listScans = asyncHandler(async (_req, res) => {
-  const prisma = getPrisma();
-  if (!prisma) return res.json({ scans: [], storageConfigured: false, message: 'Add DATABASE_URL to save and view scan history.' });
-  const [scans, totalScans] = await Promise.all([prisma.scan.findMany({
-    orderBy: { scannedAt: 'desc' },
-    take: 100,
-    select: {
-      id: true, url: true, device: true, scannedAt: true, status: true,
-      performanceScore: true, accessibilityScore: true, bestPracticesScore: true,
-      seoScore: true, overallScore: true, _count: { select: { issues: true } },
-    },
-  }), prisma.scan.count()]);
-  res.json({ scans, totalScans, storageConfigured: true });
-});
-
-export const getScan = asyncHandler(async (req, res) => {
-  const prisma = getPrisma();
-  if (!prisma) throw new AppError('Scan reports are only saved when DATABASE_URL is configured.', 503, 'STORAGE_UNAVAILABLE');
-  const scan = await prisma.scan.findUnique({
-    where: { id: req.params.id },
-    include: { issues: { orderBy: { createdAt: 'asc' } }, recommendations: { orderBy: { createdAt: 'asc' } } },
-  });
-  if (!scan) throw new AppError('That scan report was not found.', 404, 'SCAN_NOT_FOUND');
-  res.json({ scan });
 });

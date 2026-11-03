@@ -19,8 +19,7 @@ export default function ScanForm({ initialUrl = '', compact = false, onComplete,
     try {
       const scan = await createScan({ url: url.trim(), device }, onProgress);
       if (scan.status === 'partial') notify('Scan finished with some unavailable services. Review the report for details.', 'info');
-      else if (scan.persisted === false) notify('Scan complete. The report is available for this session.', 'success');
-      else notify('Scan complete and report saved.', 'success');
+      else notify('Scan complete. The report is available in this browser session.', 'success');
       onComplete?.(scan);
     } catch (requestError) {
       setError(getErrorMessage(requestError));

@@ -106,9 +106,9 @@ test('uses OpenRouter structured chat output and returns validated, evidence-lin
   assert.equal(result.analysis.contentRecommendations[0].evidence[0].ref, 'audit:missing-description');
   assert.equal(result.analysis.accessibilityRecommendations[0].evidence[0].ref, 'audit:missing-image-alt');
   assert.equal(request.schemaName, 'site_audit_recommendations');
-  assert.equal(request.maxTokens, 6000);
-  assert.equal(request.timeoutMs, 70000);
-  assert.match(request.messages[0].content, /Do not invent scores, metrics, broken links/);
+  assert.equal(request.maxTokens, 3800);
+  assert.equal(request.timeoutMs, 65000);
+  assert.match(request.messages[0].content, /Do not invent facts, metrics, or URLs/);
   assert.ok(request.messages[1].content.includes('pagespeed:vital:lcp'));
   assert.ok(request.messages[1].content.includes('"performance":76'));
   assert.ok(request.messages[1].content.includes('"value":4300'));

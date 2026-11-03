@@ -25,24 +25,23 @@ export default function History() {
   }, [reload]);
   const scans = useMemo(() => (data?.scans ?? []).filter((scan) => scan.url.toLowerCase().includes(query.toLowerCase())), [data, query]);
 
-  if (error && !data) return <div className="page-stack"><div className="page-heading-row"><div><div className="eyebrow">SCAN HISTORY</div><h1>Scan history</h1><p>Review and compare previous website reports.</p></div></div><div className="state-card error-state"><span><TriangleAlert size={20} /></span><div><b>Scan history could not load</b><p>{error}</p><button className="button button-secondary button-small" onClick={() => setReload((value) => value + 1)}>Try again</button></div></div></div>;
+  if (error && !data) return <div className="page-stack"><div className="page-heading-row"><div><div className="eyebrow">THIS BROWSER SESSION</div><h1>Recent scans</h1><p>Review reports created in this browser session.</p></div></div><div className="state-card error-state"><span><TriangleAlert size={20} /></span><div><b>Session reports could not load</b><p>{error}</p><button className="button button-secondary button-small" onClick={() => setReload((value) => value + 1)}>Try again</button></div></div></div>;
   return (
     <div className="page-stack">
-      <div className="page-heading-row"><div><div className="eyebrow">YOUR AUDIT LIBRARY</div><h1>Scan history</h1><p>Review and compare your previous website reports.</p></div><div className="history-count">{data?.scans?.length ?? '—'} <span>reports</span></div></div>
+      <div className="page-heading-row"><div><div className="eyebrow">THIS BROWSER SESSION</div><h1>Recent scans</h1><p>Review reports created in this browser session.</p></div><div className="history-count">{data?.scans?.length ?? '—'} <span>reports</span></div></div>
       {error && <div className="notice notice-error" role="alert"><TriangleAlert size={17} /> {error}<button className="inline-retry" onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
-      {data && !data.storageConfigured && <div className="notice"><Activity size={16} /> Add a PostgreSQL <code>DATABASE_URL</code> to keep scans in your history.</div>}
       <section className="panel history-panel">
-        <div className="history-toolbar"><div><h2>All scans</h2><p>Most recent first</p></div><label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by website" /></label></div>
+        <div className="history-toolbar"><div><h2>Session reports</h2><p>Most recent first · clears when this browser session ends</p></div><label className="search-box"><Search size={16} /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Filter by website" /></label></div>
         {loading && !data ? <HistorySkeleton /> : scans.length ? <div className="table-wrap"><table className="data-table history-table"><thead><tr><th>Website</th><th>Scan date</th><th>Device</th><th>Status</th><th>Performance</th><th>SEO</th><th /></tr></thead><tbody>
           {scans.map((scan) => <tr key={scan.id}><td><span className="site-cell"><span className="site-favicon">{safeHost(scan.url).charAt(0).toUpperCase()}</span><span><b>{safeHost(scan.url)}</b><small>{scan.url}</small></span></span></td><td>{new Date(scan.scannedAt).toLocaleString(undefined, { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' })}</td><td className="capitalize">{scan.device}</td><td><span className={`status-label ${scan.status === 'completed' ? 'status-complete' : 'status-partial'}`}><i />{scan.status === 'completed' ? 'Complete' : 'Partial'}</span></td><td><ScorePill score={scan.performanceScore} /></td><td><ScorePill score={scan.seoScore} /></td><td><Link to={`/reports/${scan.id}`} className="table-action">Open report <ArrowUpRight size={15} /></Link></td></tr>)}
-        </tbody></table></div> : data ? <div className="empty-table"><div className="empty-chart-icon"><Activity size={20} /></div><b>{query ? 'No matching scans' : 'No scan history yet'}</b><span>{query ? 'Try a different website name.' : data.storageConfigured ? 'Completed audits will appear here.' : 'Configure PostgreSQL to save scan history.'}</span><Link to="/scan" className="button button-primary button-small">Scan a website</Link></div> : null}
+        </tbody></table></div> : data ? <div className="empty-table"><div className="empty-chart-icon"><Activity size={20} /></div><b>{query ? 'No matching scans' : 'No scans in this session'}</b><span>{query ? 'Try a different website name.' : 'Completed audits appear here until this browser session ends.'}</span><Link to="/scan" className="button button-primary button-small">Scan a website</Link></div> : null}
       </section>
     </div>
   );
 }
 
 function HistorySkeleton() {
-  return <div className="recent-skeleton history-skeleton" aria-label="Loading scan history">{Array.from({ length: 6 }, (_, index) => <div key={index}><i /><span /><span /><span /></div>)}</div>;
+  return <div className="recent-skeleton history-skeleton" aria-label="Loading session reports">{Array.from({ length: 6 }, (_, index) => <div key={index}><i /><span /><span /><span /></div>)}</div>;
 }
 
 function safeHost(url) { try { return new URL(url).hostname; } catch { return url; } }

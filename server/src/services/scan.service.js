@@ -17,7 +17,6 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
   const auditWebsite = dependencies.auditWebsite ?? (await import('./site-audit.service.js')).auditWebsite;
   const runPageSpeed = dependencies.runPageSpeed ?? (await import('./pagespeed.service.js')).runPageSpeed;
   const generateAiAnalysis = dependencies.generateAiAnalysis ?? (await import('./ai-analysis.service.js')).generateAiAnalysis;
-  const getPrisma = dependencies.getPrisma ?? (await import('../db/prisma.js')).getPrisma;
   onProgress({ stage: 'html', status: 'running', message: 'Validating the public URL and starting the HTML audit.' });
   const warnings = [];
   let pageSpeed = null;
@@ -66,12 +65,6 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
     onProgress({ stage: 'ai', status: 'unavailable', message });
   }
 
-  let prisma = null;
-  try { prisma = getPrisma(); } catch { /* Keep the audit results if Prisma cannot initialize. */ }
-  const persistenceUnavailableMessage = process.env.DATABASE_URL
-    ? 'PostgreSQL is configured but the Prisma client could not initialize; this scan was not saved.'
-    : 'PostgreSQL is not configured; this scan was returned but not saved.';
-  if (!prisma) warnings.push(persistenceUnavailableMessage);
   const scan = {
     url: audit.finalUrl,
     device,
@@ -99,58 +92,7 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
       : [],
   };
 
-  if (prisma) {
-    onProgress({ stage: 'persistence', status: 'running', message: 'Saving the scan, findings, and recommendations to PostgreSQL.' });
-    try {
-      const saved = await prisma.scan.create({
-        data: {
-          url: scan.url,
-          device: scan.device,
-          status: scan.status,
-          performanceScore: scan.performanceScore,
-          accessibilityScore: scan.accessibilityScore,
-          bestPracticesScore: scan.bestPracticesScore,
-          seoScore: scan.seoScore,
-          overallScore: scan.overallScore,
-          coreWebVitals: scan.coreWebVitals ?? undefined,
-          technicalFindings: scan.technicalFindings,
-          pageSpeedData: scan.pageSpeedData ?? undefined,
-          aiAnalysis: scan.aiAnalysis ?? undefined,
-          serviceWarnings: scan.serviceWarnings,
-          issues: { create: scan.issues },
-          recommendations: {
-            create: scan.recommendations.map(({ category, title, priority, explanation, whyItMatters, action, exampleCode, evidenceRefs }) => ({
-              category, title, priority, explanation, whyItMatters, action,
-              exampleCode: exampleCode || null,
-              evidenceRefs,
-            })),
-          },
-        },
-      });
-      onProgress({ stage: 'persistence', status: 'complete', message: 'The scan was saved to PostgreSQL.' });
-      const result = { ...scan, id: saved.id, scannedAt: saved.scannedAt.toISOString(), persisted: true };
-      onProgress({ stage: 'complete', status: result.status, message: 'The website scan is complete.' });
-      return result;
-    } catch (error) {
-      const code = typeof error?.code === 'string' && /^P\d{4}$/.test(error.code) ? error.code : null;
-      console.error('[scan] PostgreSQL persistence failed', { name: error?.name ?? 'Error', code });
-      const message = `This report could not be saved to PostgreSQL${code ? ` (${code})` : ''}. Check database connectivity and schema.`;
-      const result = {
-        ...scan,
-        status: 'partial',
-        id: null,
-        scannedAt: new Date().toISOString(),
-        persisted: false,
-        serviceWarnings: [...warnings, message],
-      };
-      onProgress({ stage: 'persistence', status: 'unavailable', message });
-      onProgress({ stage: 'complete', status: result.status, message: 'The scan finished, but the report was not saved.' });
-      return result;
-    }
-  }
-
-  onProgress({ stage: 'persistence', status: 'unavailable', message: persistenceUnavailableMessage });
-  const result = { ...scan, id: null, scannedAt: new Date().toISOString(), persisted: false };
-  onProgress({ stage: 'complete', status: result.status, message: 'The website scan is complete with the configured analysis services.' });
+  const result = { ...scan, id: null, scannedAt: new Date().toISOString(), sessionOnly: true };
+  onProgress({ stage: 'complete', status: result.status, message: 'The website scan is complete. The report is available for this browser session.' });
   return result;
 }

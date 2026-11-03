@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getSessionReport, getSessionReports, saveSessionReport } from './session-reports.js';
 
 const apiBase = (import.meta.env.VITE_API_URL || '/api').replace(/\/+$/, '');
 const api = axios.create({ baseURL: apiBase, timeout: 15000 });
@@ -19,18 +20,19 @@ export async function getHealth() {
 }
 
 export async function getScans() {
-  const { data } = await api.get('/scans');
-  return data;
+  const scans = getSessionReports();
+  return { scans, totalScans: scans.length };
 }
 
 export async function getScan(id) {
-  const { data } = await api.get(`/scans/${id}`);
-  return data.scan;
+  const scan = getSessionReport(id);
+  if (!scan) throw new Error('This report is no longer available in this browser session. Run another scan.');
+  return scan;
 }
 
 export async function createScan(payload, onProgress = () => {}) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 240000);
+  const timeout = setTimeout(() => controller.abort(), 280000);
   let reader;
   try {
     const response = await fetch(`${apiBase}/scan?stream=1`, {
@@ -92,7 +94,7 @@ export async function createScan(payload, onProgress = () => {}) {
     }
     if (buffer.trim()) consume(buffer);
     if (!scan) throw new Error('The server ended the scan stream without returning a report.');
-    return scan;
+    return saveSessionReport(scan);
   } catch (error) {
     if (error.name === 'AbortError') throw new Error('The scan timed out. Try again or use a faster responding page.');
     throw error;

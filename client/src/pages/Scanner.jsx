@@ -14,7 +14,6 @@ export default function Scanner() {
     ['site-files', 'Check robots.txt and sitemap'],
     ['pagespeed', 'Get PageSpeed and Core Web Vitals'],
     ['ai', 'Generate AI recommendations'],
-    ['persistence', 'Save the report to PostgreSQL'],
   ];
   const currentProgress = progressEvents.at(-1);
   const stageEvents = Object.fromEntries(progressSteps.map(([stage]) => [stage, progressEvents.filter((event) => event.stage === stage).at(-1)]));

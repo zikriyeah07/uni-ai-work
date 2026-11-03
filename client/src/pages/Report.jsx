@@ -11,7 +11,7 @@ const priorityClass = (priority = 'Low') => `priority-${String(priority).toLower
 export default function Report() {
   const { id } = useParams();
   const location = useLocation();
-  const localScan = id === 'latest' ? location.state?.scan : null;
+  const localScan = location.state?.scan ?? null;
   const [scan, setScan] = useState(localScan ?? null);
   const [loading, setLoading] = useState(!localScan);
   const [error, setError] = useState('');
@@ -20,7 +20,7 @@ export default function Report() {
   const loadReport = useCallback(() => {
     if (localScan) { setScan(localScan); setLoading(false); setError(''); return; }
     if (!id || id === 'latest') {
-      setError('This session report is unavailable. Run another scan or open a saved report from history.');
+      setError('This session report is unavailable. Run another scan to create a new report.');
       setLoading(false);
       return;
     }
@@ -71,7 +71,7 @@ export default function Report() {
 
   return (
     <div className="page-stack report-page">
-      <div className="report-back-row"><Link to="/history" className="back-link"><ArrowLeft size={16} /> Scan history</Link><span className={`status-label ${scan.status === 'completed' ? 'status-complete' : 'status-partial'}`}><i />{scan.status === 'completed' ? 'Complete' : 'Partial report'}</span></div>
+      <div className="report-back-row"><Link to="/history" className="back-link"><ArrowLeft size={16} /> Recent scans</Link><span className={`status-label ${scan.status === 'completed' ? 'status-complete' : 'status-partial'}`}><i />{scan.status === 'completed' ? 'Complete' : 'Partial report'}</span></div>
 
       <header className="report-header">
         <div className="report-site-heading"><div className="eyebrow">WEBSITE AUDIT</div><h1>{safeHost(scan.url)}</h1><a href={scan.url} target="_blank" rel="noreferrer" className="report-url">{scan.url} <ExternalLink size={14} /></a></div>
@@ -79,7 +79,7 @@ export default function Report() {
       </header>
 
       {warnings.length > 0 && <div className="notice notice-warning report-warning" role="status"><TriangleAlert size={18} /><div><b>Some analysis services did not return results.</b><ul>{warnings.map((warning, index) => <li key={index}>{warning}</li>)}</ul></div></div>}
-      {scan.persisted === false && <div className="notice report-session-notice"><Activity size={17} /><span>This report is available in this session. Configure PostgreSQL to save it in scan history.</span></div>}
+      {scan.sessionOnly && <div className="notice report-session-notice"><Activity size={17} /><span>This report is stored only in this browser session and clears when the session ends.</span></div>}
 
       <section className="report-score-overview" aria-label="Website health scores">
         <div className="panel overall-panel">
@@ -137,7 +137,7 @@ export default function Report() {
 
       {(pageSpeed.opportunities?.length > 0 || pageSpeed.diagnostics?.length > 0) && <section className="panel opportunities-panel"><PanelHeading title="PageSpeed opportunities" subtitle="Optimization opportunities and diagnostics returned by Lighthouse" icon={Gauge} /><div className="opportunity-list">{[...(pageSpeed.opportunities ?? []), ...(pageSpeed.diagnostics ?? [])].map((item, index) => <div className="opportunity-row" key={`${item.id ?? item.title}-${index}`}><span className="opportunity-dot" /><div><b>{item.title}</b><span>{stripMarkup(item.description)}</span></div><small>{item.displayValue || ''}</small></div>)}</div></section>}
 
-      <div className="report-end-actions"><Link to="/history" className="back-link"><ArrowLeft size={15} /> Back to history</Link><span><Activity size={15} /> Measurements provided by Google PageSpeed Insights</span></div>
+      <div className="report-end-actions"><Link to="/history" className="back-link"><ArrowLeft size={15} /> Back to recent scans</Link><span><Activity size={15} /> Measurements provided by Google PageSpeed Insights</span></div>
     </div>
   );
 }

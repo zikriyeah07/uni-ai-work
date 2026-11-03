@@ -6,5 +6,4 @@ public
 !.env.example
 coverage
 .DS_Store
-server/generated
 .pnpm-store

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Activity, CheckCircle2, CircleHelp, Database, Gauge, Sparkles, TriangleAlert } from 'lucide-react';
+import { Activity, CheckCircle2, CircleHelp, Gauge, Sparkles, TriangleAlert } from 'lucide-react';
 import { getHealth, getErrorMessage } from '../lib/api.js';
 
 function ServiceRow({ icon: Icon, title, description, configured, detail }) {
@@ -26,8 +26,7 @@ export default function Settings() {
       {error && <div className="notice notice-error" role="alert"><TriangleAlert size={17} /> <span>{error}</span><button className="inline-retry" onClick={() => setReload((value) => value + 1)}>Retry</button></div>}
       <section className="panel settings-panel">
         <div className="settings-panel-head"><div className="settings-head-icon"><Activity size={17} /></div><div><h2>Connected services</h2><p>Configuration is read from server environment variables. Values are never shown here.</p></div></div>
-        {loading && !health ? <div className="settings-skeleton">{Array.from({ length: 4 }, (_, index) => <div className="service-skeleton" key={index}><i /><span /><b /></div>)}</div> : error && !health ? <div className="settings-load-error"><b>Service status unavailable</b><span>Configuration could not be read from the API.</span><button className="button button-secondary button-small" onClick={() => setReload((value) => value + 1)}>Try again</button></div> : <div className="service-list">
-          <ServiceRow icon={Database} title="PostgreSQL database" description="Stores scan history, issues, and recommendations." configured={health?.services?.database} detail="DATABASE_URL" />
+        {loading && !health ? <div className="settings-skeleton">{Array.from({ length: 3 }, (_, index) => <div className="service-skeleton" key={index}><i /><span /><b /></div>)}</div> : error && !health ? <div className="settings-load-error"><b>Service status unavailable</b><span>Configuration could not be read from the API.</span><button className="button button-secondary button-small" onClick={() => setReload((value) => value + 1)}>Try again</button></div> : <div className="service-list">
           <ServiceRow icon={Gauge} title="PageSpeed Insights" description="Runs Lighthouse analysis and provides measured website scores." configured={health?.services?.pageSpeedApiKey} detail={health?.services?.pageSpeedApiKey ? 'API key configured' : 'Key is optional at low volume; Google quota may be limited'} />
           <ServiceRow icon={Sparkles} title="Gemini" description="Fallback AI provider for CV reviews, roadmaps, and SiteSense recommendations." configured={health?.services?.gemini} detail={health?.services?.gemini ? `Model: ${health.services.geminiModel}` : 'GEMINI_API_KEY'} />
           <ServiceRow icon={Sparkles} title="OpenRouter" description="Routes AI tasks through free models and returns structured recommendations." configured={health?.services?.openRouter} detail={health?.services?.openRouter ? `Model: ${health.services.openRouterModel}` : 'OPENROUTER_API_KEY'} />

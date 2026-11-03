@@ -4,14 +4,14 @@ import { Activity, ArrowUpRight, BarChart3, Clock3, Gauge, Globe2, Grid2X2, Sett
 const links = [
   { to: '/dashboard', label: 'Overview', icon: BarChart3 },
   { to: '/scan', label: 'Website scanner', icon: Gauge },
-  { to: '/history', label: 'Scan history', icon: Clock3 },
+  { to: '/history', label: 'Recent scans', icon: Clock3 },
   { to: '/settings', label: 'Settings', icon: Settings2 },
 ];
 
 const titleMap = {
   '/dashboard': 'Overview',
   '/scan': 'Website scanner',
-  '/history': 'Scan history',
+  '/history': 'Recent scans',
   '/settings': 'Settings',
 };
 

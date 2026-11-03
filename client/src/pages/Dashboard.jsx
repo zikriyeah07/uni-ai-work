@@ -40,25 +40,23 @@ export default function Dashboard() {
     <div className="page-stack dashboard-page">
       <div className="page-heading-row">
         <div><div className="eyebrow">OVERVIEW</div><h1>Your website health</h1><p>Recent audit results and the measures that need attention.</p></div>
-        <Link to="/history" className="text-link">View scan history <ArrowRight size={16} /></Link>
+        <Link to="/history" className="text-link">View recent scans <ArrowRight size={16} /></Link>
       </div>
 
       {error && <div className="notice notice-error dashboard-error" role="alert"><TriangleAlert size={18} /><span>{error}</span><button className="button button-secondary button-small" onClick={() => setReload((value) => value + 1)}>Try again</button></div>}
-      {data && !data.storageConfigured && <div className="notice"><Activity size={17} /><span>Scan history is not saved yet. Add PostgreSQL <code>DATABASE_URL</code> to keep reports between sessions.</span></div>}
-
       <section className="score-grid overview-scores" aria-label="Scan statistics">
         {loading && !data ? <MetricSkeletons /> : <>
-          <ScoreCard label="Total scans" score={data ? (data.totalScans ?? scans.length) : null} unit="" metric="count" note={data ? (data.storageConfigured ? 'Saved reports' : 'No saved history') : 'Unable to load'} icon={Activity} />
-          <ScoreCard label="Average performance" score={average('performanceScore')} note="Across loaded reports" icon={Gauge} />
-          <ScoreCard label="Average SEO" score={average('seoScore')} note="Across loaded reports" icon={SearchCheck} />
-          <ScoreCard label="Average accessibility" score={average('accessibilityScore')} note="Across loaded reports" icon={Sparkles} />
+          <ScoreCard label="Scans this session" score={data ? (data.totalScans ?? scans.length) : null} unit="" metric="count" note="Stored in this browser tab" icon={Activity} />
+          <ScoreCard label="Average performance" score={average('performanceScore')} note="Across session reports" icon={Gauge} />
+          <ScoreCard label="Average SEO" score={average('seoScore')} note="Across session reports" icon={SearchCheck} />
+          <ScoreCard label="Average accessibility" score={average('accessibilityScore')} note="Across session reports" icon={Sparkles} />
         </>}
       </section>
 
       <div className="dashboard-grid">
         <section className="panel chart-panel">
-          <div className="panel-heading"><div><h2>Performance trend</h2><p>PageSpeed performance across your latest saved scans</p></div><span className="chart-legend"><i /> Performance</span></div>
-          {loading && !data ? <div className="chart-skeleton" aria-label="Loading performance trend" /> : error && !data ? <div className="empty-chart"><div className="error-state-icon"><TriangleAlert size={20} /></div><b>Performance data unavailable</b><span>Saved scans could not be loaded.</span><button className="text-link" onClick={() => setReload((value) => value + 1)}>Try again <ArrowRight size={15} /></button></div> : chartData.length > 0 ? <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 12, right: 16, left: -18, bottom: 0 }}>
+          <div className="panel-heading"><div><h2>Performance trend</h2><p>PageSpeed performance across scans in this session</p></div><span className="chart-legend"><i /> Performance</span></div>
+          {loading && !data ? <div className="chart-skeleton" aria-label="Loading performance trend" /> : error && !data ? <div className="empty-chart"><div className="error-state-icon"><TriangleAlert size={20} /></div><b>Performance data unavailable</b><span>Session reports could not be loaded.</span><button className="text-link" onClick={() => setReload((value) => value + 1)}>Try again <ArrowRight size={15} /></button></div> : chartData.length > 0 ? <div className="chart-wrap"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData} margin={{ top: 12, right: 16, left: -18, bottom: 0 }}>
             <CartesianGrid stroke="#e8ebf0" vertical={false} />
             <XAxis dataKey="date" axisLine={false} tickLine={false} tick={{ fill: '#6c7788', fontSize: 12 }} dy={10} />
             <YAxis domain={[0, 100]} ticks={[0, 25, 50, 75, 100]} axisLine={false} tickLine={false} tick={{ fill: '#6c7788', fontSize: 11 }} />
@@ -75,10 +73,10 @@ export default function Dashboard() {
       </div>
 
       <section className="panel recent-panel">
-        <div className="panel-heading"><div><h2>Recent scans</h2><p>Latest reports saved to your workspace</p></div><Link to="/history" className="text-link">All scans <ArrowRight size={15} /></Link></div>
-        {loading && !data ? <RecentSkeleton /> : error && !data ? <div className="empty-table"><div className="error-state-icon"><TriangleAlert size={20} /></div><b>Saved scans unavailable</b><span>Try again to retrieve your recent reports.</span><button className="button button-secondary button-small" onClick={() => setReload((value) => value + 1)}>Try again</button></div> : scans.length > 0 ? <div className="table-wrap"><table className="data-table"><thead><tr><th>Website</th><th>Scanned</th><th>Device</th><th>Performance</th><th>SEO</th><th>Report</th></tr></thead><tbody>
+        <div className="panel-heading"><div><h2>Recent scans</h2><p>Reports created in this browser session</p></div><Link to="/history" className="text-link">All scans <ArrowRight size={15} /></Link></div>
+        {loading && !data ? <RecentSkeleton /> : error && !data ? <div className="empty-table"><div className="error-state-icon"><TriangleAlert size={20} /></div><b>Session reports unavailable</b><span>Try again to load reports from this browser session.</span><button className="button button-secondary button-small" onClick={() => setReload((value) => value + 1)}>Try again</button></div> : scans.length > 0 ? <div className="table-wrap"><table className="data-table"><thead><tr><th>Website</th><th>Scanned</th><th>Device</th><th>Performance</th><th>SEO</th><th>Report</th></tr></thead><tbody>
           {scans.slice(0, 6).map((scan) => <tr key={scan.id}><td><span className="site-cell"><span className="site-favicon">{host(scan.url).charAt(0).toUpperCase()}</span><span><b>{host(scan.url)}</b><small>{scan.url}</small></span></span></td><td>{dateTime(scan.scannedAt)}</td><td className="capitalize">{scan.device}</td><td><ScorePill score={scan.performanceScore} /></td><td><ScorePill score={scan.seoScore} /></td><td><Link to={`/reports/${scan.id}`} className="icon-link" aria-label={`View report for ${host(scan.url)}`}><ArrowUpRight size={17} /></Link></td></tr>)}
-        </tbody></table></div> : <div className="empty-table"><div className="empty-chart-icon"><Activity size={21} /></div><b>No saved scans</b><span>Run an audit and its report will appear here when PostgreSQL is configured.</span><Link to="/scan" className="button button-primary button-small">Scan a website</Link></div>}
+        </tbody></table></div> : <div className="empty-table"><div className="empty-chart-icon"><Activity size={21} /></div><b>No scans in this session</b><span>Run an audit and its report will stay available in this browser session.</span><Link to="/scan" className="button button-primary button-small">Scan a website</Link></div>}
       </section>
     </div>
   );

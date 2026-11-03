@@ -10,9 +10,7 @@
   "scripts": {
     "dev": "pnpm --filter @sitesense/server dev & pnpm --filter @sitesense/client dev & wait",
     "build": "pnpm --filter @sitesense/client build",
-    "vercel-build": "pnpm --filter @sitesense/server db:generate && pnpm --filter @sitesense/client build:vercel",
-    "db:generate": "pnpm --filter @sitesense/server db:generate",
-    "db:push": "pnpm --filter @sitesense/server db:push"
+    "vercel-build": "pnpm --filter @sitesense/client build:vercel"
   },
   "dependencies": {
     "express": "5.3.0"
