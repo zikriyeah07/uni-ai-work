@@ -86,10 +86,8 @@ function invalidResponse(message) {
   return new AppError(`The AI provider returned an invalid analysis: ${message}`, 502, 'AI_INVALID_RESPONSE');
 }
 
-function requireObject(value, path, allowedKeys) {
+function requireObject(value, path) {
   if (!record(value)) throw invalidResponse(`${path} must be an object.`);
-  const unexpected = Object.keys(value).find((key) => !allowedKeys.includes(key));
-  if (unexpected) throw invalidResponse(`${path} included an unexpected field.`);
 }
 
 function requireText(value, path, { min = 1, max = 800 } = {}) {
@@ -105,8 +103,7 @@ function requireArray(value, path, max) {
 }
 
 function validateRecommendation(value, path) {
-  const keys = ['category', 'priority', 'explanation', 'whyItMatters', 'action', 'exampleCode', 'evidenceRefs'];
-  requireObject(value, path, keys);
+  requireObject(value, path);
   if (!CATEGORIES.includes(value.category)) throw invalidResponse(`${path}.category is not supported.`);
   if (!PRIORITIES.includes(value.priority)) throw invalidResponse(`${path}.priority is not supported.`);
   const evidenceRefs = requireArray(value.evidenceRefs, `${path}.evidenceRefs`, 3)
@@ -134,14 +131,9 @@ function parseAnalysis(input) {
   } else {
     value = input;
   }
-  const rootKeys = [
-    'websiteSummary', 'overallAssessment', 'topProblems', 'seoRecommendations',
-    'technicalSeoRecommendations', 'performanceRecommendations', 'contentRecommendations',
-    'accessibilityRecommendations', 'prioritizedActionPlan',
-  ];
-  requireObject(value, 'analysis', rootKeys);
+  requireObject(value, 'analysis');
   const topProblems = requireArray(value.topProblems, 'topProblems', 3).map((problem, index) => {
-    requireObject(problem, `topProblems[${index}]`, ['evidenceRef', 'whyItMatters']);
+    requireObject(problem, `topProblems[${index}]`);
     return {
       evidenceRef: requireText(problem.evidenceRef, `topProblems[${index}].evidenceRef`, { max: 120 }),
       whyItMatters: requireText(problem.whyItMatters, `topProblems[${index}].whyItMatters`, { min: 10, max: 600 }),
