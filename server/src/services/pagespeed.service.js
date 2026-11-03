@@ -52,7 +52,7 @@ export async function runPageSpeed(url, device = 'mobile') {
 
   let response;
   try {
-    response = await fetch(endpoint, { signal: AbortSignal.timeout(75000) });
+    response = await fetch(endpoint, { signal: AbortSignal.timeout(100000) });
   } catch (error) {
     throw new AppError(error.name === 'TimeoutError' ? 'PageSpeed analysis timed out. Try again in a moment.' : 'Google PageSpeed could not be reached.', 502, 'PAGESPEED_UNAVAILABLE');
   }

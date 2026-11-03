@@ -107,7 +107,7 @@ test('uses OpenRouter structured chat output and returns validated, evidence-lin
   assert.equal(result.analysis.accessibilityRecommendations[0].evidence[0].ref, 'audit:missing-image-alt');
   assert.equal(request.schemaName, 'site_audit_recommendations');
   assert.equal(request.maxTokens, 3800);
-  assert.equal(request.timeoutMs, 65000);
+  assert.equal(request.timeoutMs, 50000);
   assert.match(request.messages[0].content, /Do not invent facts, metrics, or URLs/);
   assert.ok(request.messages[1].content.includes('pagespeed:vital:lcp'));
   assert.ok(request.messages[1].content.includes('"performance":76'));
@@ -126,22 +126,28 @@ test('returns a friendly unavailable result when the API key is missing', async 
   assert.equal(requestSent, false);
 });
 
-test('rejects generated recommendations that cite evidence the audit did not detect', async (t) => {
+test('omits recommendations that cite unknown evidence while preserving supported advice', async (t) => {
   useOpenRouterOnly();
   process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
   const bad = response({ seoRecommendations: [recommendation('SEO', ['audit:invented-finding'])] });
-  await assert.rejects(generateAiAnalysis(input(), { requestOpenRouter: fakeOpenRouter(bad) }), { code: 'AI_INVALID_RESPONSE' });
+  const result = await generateAiAnalysis(input(), { requestOpenRouter: fakeOpenRouter(bad) });
+  assert.equal(result.analysis.seoRecommendations.length, 0);
+  assert.equal(result.analysis.technicalSeoRecommendations.length, 1);
+  assert.match(result.warnings[0], /omitted because they included unsupported claims/);
 });
 
-test('rejects invented numeric metrics in recommendation text', async (t) => {
+test('omits a recommendation with an invented numeric metric but preserves the rest of the analysis', async (t) => {
   useOpenRouterOnly();
   process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
   const bad = response({
     performanceRecommendations: [recommendation('Performance', ['pagespeed:vital:lcp'], { explanation: 'The score of 99 proves the page has an issue.' })],
   });
-  await assert.rejects(generateAiAnalysis(input(), { requestOpenRouter: fakeOpenRouter(bad) }), { code: 'AI_INVALID_RESPONSE' });
+  const result = await generateAiAnalysis(input(), { requestOpenRouter: fakeOpenRouter(bad) });
+  assert.equal(result.analysis.performanceRecommendations.length, 0);
+  assert.equal(result.analysis.seoRecommendations.length, 1);
+  assert.match(result.warnings[0], /omitted because they included unsupported claims/);
 });
 
 test('turns free-model limit and timeout failures into friendly service errors', async (t) => {
