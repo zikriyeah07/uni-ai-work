@@ -1,7 +1,7 @@
 import { AppError } from '../utils/errors.js';
 import { geminiLatencyConfig, logGeminiRequestFailure } from './gemini-config.js';
 
-const DEFAULT_MODEL = 'gemini-3.8-flash';
+const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
 const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_OUTPUT_TOKENS = 5_000;
 const CATEGORIES = ['SEO', 'Technical SEO', 'Performance', 'Content', 'Accessibility'];

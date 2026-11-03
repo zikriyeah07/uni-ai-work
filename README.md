@@ -36,7 +36,7 @@ The repository root is the Vercel project root. `vercel.json` builds the React a
 Set these server-side Environment Variables in the Vercel project:
 
 - `GEMINI_API_KEY`
-- `GEMINI_MODEL` (for example, `gemini-3.8-flash`)
+- `GEMINI_MODEL` (free-tier default: `gemini-3.5-flash-lite`)
 - `PAGESPEED_API_KEY`
 - `DATABASE_URL` and `DIRECT_URL` (Neon pooled and direct connection URLs)
 

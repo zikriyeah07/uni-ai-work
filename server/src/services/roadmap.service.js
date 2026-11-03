@@ -71,8 +71,8 @@ function friendlyApiError(error) {
 export async function generateRoadmap(body, dependencies = {}) {
   const input = validateRoadmapRequest(body);
   const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) throw new AppError('The roadmap generator is unavailable because GEMINI_API_KEY is not configured on the server.', 503, 'GEMINI_NOT_CONFIGURED');
-  const model = process.env.GEMINI_MODEL?.trim() || 'gemini-3.8-flash';
+  if (!apiKey) throw new AppError('The roadmap generator cannot access Gemini because GEMINI_API_KEY is missing from this server environment. On Vercel, add it in Project Settings → Environment Variables for Production, then redeploy; a local .env file is not deployed.', 503, 'GEMINI_NOT_CONFIGURED');
+  const model = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
   try {
     const ai = dependencies.createClient ? await dependencies.createClient(apiKey) : new (await import('@google/genai')).GoogleGenAI({ apiKey });
     const response = await ai.models.generateContent({

@@ -10,8 +10,8 @@ router.get('/health', (_req, res) => {
     services: {
       database: Boolean(process.env.DATABASE_URL),
       pageSpeedApiKey: Boolean(process.env.PAGESPEED_API_KEY),
-      gemini: Boolean(process.env.GEMINI_API_KEY),
-      geminiModel: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+      gemini: Boolean(process.env.GEMINI_API_KEY?.trim()),
+      geminiModel: process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite',
     },
   });
 });
