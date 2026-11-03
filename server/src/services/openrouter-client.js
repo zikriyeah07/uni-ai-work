@@ -29,21 +29,19 @@ function jsonSchema(node) {
   return schema;
 }
 
-export function buildOpenRouterPayload({ model, messages, schemaName, schema, maxTokens, plugins = [] }) {
+export function buildOpenRouterPayload({ model, messages, schemaName, schema, maxTokens, plugins = [], structuredOutput = true }) {
   return {
     model,
     messages,
     max_tokens: maxTokens,
-    reasoning: { enabled: false },
-    provider: { require_parameters: true },
-    response_format: {
+    ...(structuredOutput ? { response_format: {
       type: 'json_schema',
       json_schema: {
         name: schemaName,
         strict: true,
         schema: jsonSchema(schema),
       },
-    },
+    } } : {}),
     ...(plugins.length ? { plugins } : {}),
   };
 }
@@ -54,41 +52,80 @@ function responseText(content) {
   return content.map((part) => typeof part?.text === 'string' ? part.text : '').join('');
 }
 
-export async function requestOpenRouter({ messages, schemaName, schema, maxTokens, timeoutMs, plugins = [] }, dependencies = {}) {
+function isStructuredOutputRejection(error) {
+  const status = Number(error?.status ?? error?.statusCode);
+  const detail = String(error?.message ?? '').toLowerCase();
+  return [400, 404, 422].includes(status)
+    && /structured.?output|response.?format|json.?schema|schema support|unsupported.{0,30}(format|schema)|(format|schema).{0,30}unsupported/.test(detail);
+}
+
+function withSchemaInstructions(messages, schemaName, schema) {
+  const instruction = `Return one valid JSON object for ${schemaName}. Follow this JSON Schema exactly and return no markdown: ${JSON.stringify(jsonSchema(schema))}`;
+  const systemIndex = messages.findIndex((message) => message.role === 'system' && typeof message.content === 'string');
+  if (systemIndex < 0) return [{ role: 'system', content: instruction }, ...messages];
+  return messages.map((message, index) => index === systemIndex
+    ? { ...message, content: `${message.content}\n\n${instruction}` }
+    : message);
+}
+
+export async function requestOpenRouter({ messages, schemaName, schema, maxTokens, timeoutMs, plugins = [], allowPlainJsonFallback = false }, dependencies = {}) {
   const { apiKey, model } = getOpenRouterConfig();
   const fetchImpl = dependencies.fetch ?? globalThis.fetch;
-  const response = await fetchImpl(CHAT_COMPLETIONS_URL, {
-    method: 'POST',
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify(buildOpenRouterPayload({ model, messages, schemaName, schema, maxTokens, plugins })),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const send = async (requestPayload) => {
+    const response = await fetchImpl(CHAT_COMPLETIONS_URL, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(requestPayload),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
 
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    payload = null;
-  }
-  if (!response.ok) {
-    const detail = payload?.error?.message ?? payload?.message ?? `OpenRouter returned HTTP ${response.status}.`;
-    const error = new Error(String(detail));
-    error.status = Number(payload?.error?.code) || response.status;
-    error.code = typeof payload?.error?.code === 'string' ? payload.error.code : undefined;
-    error.name = 'OpenRouterApiError';
-    throw error;
-  }
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (!response.ok) {
+      const detail = payload?.error?.message ?? payload?.message ?? `OpenRouter returned HTTP ${response.status}.`;
+      const error = new Error(String(detail));
+      error.status = Number(payload?.error?.code) || response.status;
+      error.code = typeof payload?.error?.code === 'string' ? payload.error.code : undefined;
+      error.name = 'OpenRouterApiError';
+      throw error;
+    }
 
-  const choice = payload?.choices?.[0];
-  return {
-    text: responseText(choice?.message?.content),
-    annotations: Array.isArray(choice?.message?.annotations) ? choice.message.annotations : [],
-    model: typeof payload?.model === 'string' ? payload.model : model,
-    finishReason: choice?.finish_reason ?? null,
+    const choice = payload?.choices?.[0];
+    return {
+      text: responseText(choice?.message?.content),
+      annotations: Array.isArray(choice?.message?.annotations) ? choice.message.annotations : [],
+      model: typeof payload?.model === 'string' ? payload.model : model,
+      finishReason: choice?.finish_reason ?? null,
+    };
   };
+
+  const requestPayload = buildOpenRouterPayload({ model, messages, schemaName, schema, maxTokens, plugins });
+  try {
+    return await send(requestPayload);
+  } catch (error) {
+    if (!allowPlainJsonFallback || !isStructuredOutputRejection(error)) throw error;
+    console.warn('[openrouter] structured output was rejected; retrying with schema-guided JSON text', {
+      status: Number(error.status ?? error.statusCode) || null,
+      code: typeof error.code === 'string' ? error.code.slice(0, 80) : null,
+    });
+    const fallbackPayload = buildOpenRouterPayload({
+      model,
+      messages: withSchemaInstructions(messages, schemaName, schema),
+      schemaName,
+      schema,
+      maxTokens,
+      plugins,
+      structuredOutput: false,
+    });
+    return send(fallbackPayload);
+  }
 }
 
 export function mapOpenRouterError(error, task) {

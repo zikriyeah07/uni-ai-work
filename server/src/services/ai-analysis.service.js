@@ -311,6 +311,7 @@ export async function generateAiAnalysis({ findings = [], pageFacts = {}, pageSp
       schema: responseSchema,
       maxTokens: MAX_OUTPUT_TOKENS,
       timeoutMs: REQUEST_TIMEOUT_MS,
+      allowPlainJsonFallback: true,
   };
   const compactMeasured = {
     ...measured,
