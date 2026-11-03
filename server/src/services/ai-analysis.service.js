@@ -3,7 +3,7 @@ import { logOpenRouterFailure, mapOpenRouterError, requestOpenRouter } from './o
 import { logGeminiFailure, mapGeminiError, requestGemini } from './gemini-client.js';
 import { parseAiJson, responseWasTruncated, runAiWithFallback } from './ai-provider-fallback.js';
 
-const REQUEST_TIMEOUT_MS = 50_000;
+const REQUEST_TIMEOUT_MS = 45_000;
 const MAX_OUTPUT_TOKENS = 3_800;
 const COMPACT_OUTPUT_TOKENS = 2_200;
 const CATEGORIES = ['SEO', 'Technical SEO', 'Performance', 'Content', 'Accessibility'];

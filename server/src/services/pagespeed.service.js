@@ -1,5 +1,8 @@
 import { AppError } from '../utils/errors.js';
 
+const PAGE_SPEED_TIMEOUT_MS = 120_000;
+const PAGE_SPEED_RETRY_TIMEOUT_MS = 20_000;
+
 function auditValue(audits, key) {
   const audit = audits?.[key];
   if (!audit) return null;
@@ -52,9 +55,20 @@ export async function runPageSpeed(url, device = 'mobile') {
 
   let response;
   try {
-    response = await fetch(endpoint, { signal: AbortSignal.timeout(120000) });
+    response = await fetch(endpoint, { signal: AbortSignal.timeout(PAGE_SPEED_TIMEOUT_MS) });
   } catch (error) {
-    throw new AppError(error.name === 'TimeoutError' ? 'PageSpeed analysis timed out. Try again in a moment.' : 'Google PageSpeed could not be reached.', 502, 'PAGESPEED_UNAVAILABLE');
+    if (error.name !== 'TimeoutError') throw new AppError('Google PageSpeed could not be reached.', 502, 'PAGESPEED_UNAVAILABLE');
+    try {
+      response = await fetch(endpoint, { signal: AbortSignal.timeout(PAGE_SPEED_RETRY_TIMEOUT_MS) });
+    } catch (retryError) {
+      throw new AppError(
+        retryError.name === 'TimeoutError'
+          ? 'PageSpeed analysis timed out after a retry. Try again in a moment.'
+          : 'Google PageSpeed could not be reached after a retry.',
+        502,
+        'PAGESPEED_UNAVAILABLE',
+      );
+    }
   }
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
