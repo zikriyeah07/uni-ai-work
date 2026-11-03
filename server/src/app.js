@@ -43,6 +43,12 @@ export function createApp({ expressFactory = express, spaIndexPath = null } = {}
   app.use('/api/cv/analyze', expressFactory.json({ limit: '4.1mb' }));
   app.use(expressFactory.json({ limit: '32kb' }));
 
+  // Vercel packages the built frontend with the Express function. Serve the
+  // hashed Vite bundles before the SPA fallback so the browser can load them.
+  if (spaIndexPath) {
+    app.use(expressFactory.static(path.dirname(spaIndexPath), { index: false }));
+  }
+
   app.get('/', (_req, res, next) => {
     if (spaIndexPath) return res.sendFile(spaIndexPath, (error) => { if (error) next(error); });
     res.json({ name: 'Applied AI Project Lab API', health: '/api/health' });
