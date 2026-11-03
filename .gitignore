@@ -1,0 +1,10 @@
+node_modules
+dist
+public
+.env
+.env.*
+!.env.example
+coverage
+.DS_Store
+server/generated
+.pnpm-store

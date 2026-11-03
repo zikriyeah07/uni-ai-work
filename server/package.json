@@ -1,0 +1,25 @@
+{
+  "name": "@sitesense/server",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node src/index.js",
+    "start": "node src/index.js",
+    "test": "node --test",
+    "db:generate": "node scripts/prisma.js generate",
+    "db:push": "node scripts/prisma.js db push"
+  },
+  "dependencies": {
+    "@google/genai": "^2.32.0",
+    "@prisma/client": "6.19.3",
+    "cheerio": "^1.1.2",
+    "cors": "^2.8.6",
+    "dotenv": "^16.6.1",
+    "express": "^5.3.0",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "prisma": "6.19.3"
+  }
+}

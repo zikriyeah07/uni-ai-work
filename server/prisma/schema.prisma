@@ -1,0 +1,65 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Scan {
+  id                   String             @id @default(cuid())
+  url                  String
+  device               String             @default("mobile")
+  scannedAt            DateTime           @default(now())
+  status               String             @default("completed")
+  performanceScore     Int?
+  accessibilityScore   Int?
+  bestPracticesScore   Int?
+  seoScore             Int?
+  overallScore         Int?
+  coreWebVitals        Json?
+  technicalFindings    Json?
+  pageSpeedData        Json?
+  geminiAnalysis       Json?
+  serviceWarnings      Json?
+  issues               AuditIssue[]
+  recommendations      AIRecommendation[]
+
+  @@index([scannedAt])
+  @@index([url])
+}
+
+model AuditIssue {
+  id          String   @id @default(cuid())
+  scanId      String
+  key         String
+  category    String
+  title       String
+  priority    String
+  description String
+  howToFix    String
+  exampleCode String?
+  createdAt   DateTime @default(now())
+  scan        Scan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@index([scanId])
+}
+
+model AIRecommendation {
+  id          String   @id @default(cuid())
+  scanId      String
+  category    String
+  title       String
+  priority    String
+  explanation String
+  whyItMatters String?
+  action       String
+  exampleCode  String?
+  evidenceRefs Json?
+  createdAt    DateTime @default(now())
+  scan         Scan     @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@index([scanId])
+}
