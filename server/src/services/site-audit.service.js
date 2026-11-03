@@ -148,7 +148,7 @@ export async function auditWebsite(rawUrl, { onProgress = () => {}, onPageResolv
   });
   const linksChecked = [...internalHrefs].slice(0, 24);
   onProgress({ stage: 'links', status: 'running', message: `Checking ${linksChecked.length} internal links with bounded concurrency.` });
-  const linkResults = await mapWithConcurrency(linksChecked, 8, async (url) => ({ url, ...(await checkResource(url, {}, fetcher)) }));
+  const linkResults = await mapWithConcurrency(linksChecked, 5, async (url) => ({ url, ...(await checkResource(url, {}, fetcher)) }));
   onProgress({ stage: 'links', status: 'complete', message: `${linksChecked.length} internal links have been checked.` });
   const brokenLinks = linkResults.filter((item) => !item.available || item.status >= 400);
   if (brokenLinks.length) {
