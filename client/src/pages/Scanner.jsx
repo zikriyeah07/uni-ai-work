@@ -13,7 +13,7 @@ export default function Scanner() {
     ['links', 'Check internal links'],
     ['site-files', 'Check robots.txt and sitemap'],
     ['pagespeed', 'Get PageSpeed and Core Web Vitals'],
-    ['openrouter', 'Generate recommendations'],
+    ['ai', 'Generate AI recommendations'],
     ['persistence', 'Save the report to PostgreSQL'],
   ];
   const currentProgress = progressEvents.at(-1);
@@ -40,7 +40,7 @@ export default function Scanner() {
         <aside className="panel scanner-aside">
           <div className="aside-title"><span className="aside-icon"><Activity size={16} /></span><h3>What gets checked</h3></div>
           <div className="check-list"><span><Check size={14} /> Title, description, headings</span><span><Check size={14} /> Images and internal links</span><span><Check size={14} /> Canonical, viewport, Open Graph</span><span><Check size={14} /> robots.txt and XML sitemap</span><span><Check size={14} /> Lighthouse scores and CWV</span><span><Check size={14} /> Evidence-based AI actions</span></div>
-          <div className="aside-divider" /><p className="aside-disclaimer">PageSpeed and OpenRouter are external services. Missing keys, free-model limits, or network issues are shown in your report.</p>
+          <div className="aside-divider" /><p className="aside-disclaimer">PageSpeed and the configured AI providers are external services. AI tries providers in the configured order and falls back if one fails. Missing keys, free-model limits, or network issues are shown in your report.</p>
         </aside>
       </div>
     </div>

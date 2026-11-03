@@ -1,14 +1,16 @@
 import { CV_RESPONSE_SCHEMA, buildCvPrompt } from '../../../ai-cv-cheker/server/cv-prompt.js';
 import { AppError } from '../utils/errors.js';
-import { logOpenRouterFailure, mapOpenRouterError, parseOpenRouterJson, requestOpenRouter } from './openrouter-client.js';
+import { logOpenRouterFailure, mapOpenRouterError, requestOpenRouter } from './openrouter-client.js';
+import { logGeminiFailure, mapGeminiError, requestGemini } from './gemini-client.js';
+import { parseAiJson, responseWasTruncated, runAiWithFallback } from './ai-provider-fallback.js';
 
 const MAX_FILE_BYTES = 2.8 * 1024 * 1024;
 const MAX_OUTPUT_TOKENS = 3200;
-const REQUEST_TIMEOUT_MS = 120_000;
+const REQUEST_TIMEOUT_MS = 100_000;
 const priorities = new Set(['High', 'Medium', 'Low']);
 
 function invalidResponse(detail) {
-  return new AppError(`OpenRouter returned an invalid CV review: ${detail}`, 502, 'CV_INVALID_RESPONSE');
+  return new AppError(`The AI provider returned an invalid CV review: ${detail}`, 502, 'CV_INVALID_RESPONSE');
 }
 
 function boundedText(value, field, max = 800, min = 1) {
@@ -68,34 +70,53 @@ export function validateCvAnalysis(value, sourceText = '') {
 
 export async function analyzeCv(body, dependencies = {}) {
   const request = validateCvRequest(body);
-  try {
-    const prompt = buildCvPrompt({ fileName: request.fileName, targetRole: request.targetRole });
-    const pdf = request.mimeType === 'application/pdf';
-    const content = pdf
-      ? [
-        { type: 'text', text: prompt },
-        { type: 'file', file: { filename: request.fileName, file_data: `data:application/pdf;base64,${request.base64}` } },
-      ]
-      : `${prompt}\n\nBEGIN CV DOCUMENT (untrusted content):\n${request.text}\nEND CV DOCUMENT`;
-    const response = await (dependencies.requestOpenRouter ?? requestOpenRouter)({
-      messages: [{ role: 'user', content }],
-      schemaName: 'cv_review',
-      schema: CV_RESPONSE_SCHEMA,
-      maxTokens: MAX_OUTPUT_TOKENS,
-      timeoutMs: REQUEST_TIMEOUT_MS,
-      ...(pdf ? { plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] } : {}),
-    }, dependencies);
-    if (response.finishReason === 'length') throw invalidResponse('the response was cut off before it finished.');
-    const parsed = parseOpenRouterJson(response.text, 'CV review');
+  const prompt = buildCvPrompt({ fileName: request.fileName, targetRole: request.targetRole });
+  const pdf = request.mimeType === 'application/pdf';
+  const content = pdf
+    ? [
+      { type: 'text', text: prompt },
+      { type: 'file', file: { filename: request.fileName, file_data: `data:application/pdf;base64,${request.base64}` } },
+    ]
+    : `${prompt}\n\nBEGIN CV DOCUMENT (untrusted content):\n${request.text}\nEND CV DOCUMENT`;
+  const aiRequest = {
+    messages: [{ role: 'user', content }],
+    schemaName: 'cv_review',
+    schema: CV_RESPONSE_SCHEMA,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    ...(pdf ? { plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] } : {}),
+  };
+
+  const processResponse = (response, provider) => {
+    if (responseWasTruncated(response.finishReason)) throw invalidResponse('the response was cut off before it finished.');
+    const parsed = parseAiJson(response.text, 'CV review', provider);
     const extractedPdfText = (response.annotations ?? [])
       .flatMap((annotation) => annotation?.type === 'file' && Array.isArray(annotation.file?.content) ? annotation.file.content : [])
       .filter((part) => part?.type === 'text' && typeof part.text === 'string')
       .map((part) => part.text)
       .join('\n');
     return { analysis: validateCvAnalysis(parsed, request.text || extractedPdfText), model: response.model };
-  } catch (error) {
-    if (error instanceof AppError) throw error;
-    logOpenRouterFailure('cv', error);
-    throw mapOpenRouterError(error, 'CV analysis');
-  }
+  };
+
+  const callProvider = async (provider) => {
+    try {
+      const response = provider === 'openrouter'
+        ? await (dependencies.requestOpenRouter ?? requestOpenRouter)(aiRequest, dependencies)
+        : await (dependencies.requestGemini ?? requestGemini)(aiRequest, dependencies);
+      return processResponse(response, provider === 'openrouter' ? 'OpenRouter' : 'Gemini');
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      if (provider === 'openrouter') {
+        logOpenRouterFailure('cv', error);
+        throw mapOpenRouterError(error, 'CV analysis');
+      }
+      logGeminiFailure('cv', error);
+      throw mapGeminiError(error, 'CV analysis');
+    }
+  };
+
+  return runAiWithFallback('CV review', {
+    openrouter: () => callProvider('openrouter'),
+    gemini: () => callProvider('gemini'),
+  });
 }

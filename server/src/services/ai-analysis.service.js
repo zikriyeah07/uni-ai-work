@@ -1,7 +1,9 @@
 import { AppError } from '../utils/errors.js';
-import { logOpenRouterFailure, mapOpenRouterError, parseOpenRouterJson, requestOpenRouter } from './openrouter-client.js';
+import { logOpenRouterFailure, mapOpenRouterError, requestOpenRouter } from './openrouter-client.js';
+import { logGeminiFailure, mapGeminiError, requestGemini } from './gemini-client.js';
+import { parseAiJson, responseWasTruncated, runAiWithFallback } from './ai-provider-fallback.js';
 
-const REQUEST_TIMEOUT_MS = 120_000;
+const REQUEST_TIMEOUT_MS = 70_000;
 const MAX_OUTPUT_TOKENS = 6_000;
 const CATEGORIES = ['SEO', 'Technical SEO', 'Performance', 'Content', 'Accessibility'];
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
@@ -66,7 +68,7 @@ function record(value) {
 }
 
 function invalidResponse(message) {
-  return new AppError(`OpenRouter returned an invalid analysis: ${message}`, 502, 'OPENROUTER_INVALID_RESPONSE');
+  return new AppError(`The AI provider returned an invalid analysis: ${message}`, 502, 'AI_INVALID_RESPONSE');
 }
 
 function requireObject(value, path, allowedKeys) {
@@ -265,9 +267,7 @@ function verifyEvidence(analysis, sources) {
   return analysis;
 }
 
-export async function generateOpenRouterAnalysis({ findings = [], pageFacts = {}, pageSpeed = null }, dependencies = {}) {
-  if (!process.env.OPENROUTER_API_KEY?.trim()) return { analysis: null, warnings: ['AI recommendations are unavailable until OPENROUTER_API_KEY is configured.'] };
-
+export async function generateAiAnalysis({ findings = [], pageFacts = {}, pageSpeed = null }, dependencies = {}) {
   const sources = buildEvidence(findings, pageSpeed);
   const measured = {
     auditFindings: findings.slice(0, 40).map(({ key, category, title, priority, description, howToFix }) => ({ key, category, title, priority, description, howToFix })),
@@ -275,8 +275,7 @@ export async function generateOpenRouterAnalysis({ findings = [], pageFacts = {}
     pageSpeed: compactPageSpeed(pageSpeed),
     evidence: sources,
   };
-  try {
-    const response = await (dependencies.requestOpenRouter ?? requestOpenRouter)({
+  const aiRequest = {
       messages: [
         { role: 'system', content: systemInstruction },
         { role: 'user', content: JSON.stringify(measured) },
@@ -285,13 +284,37 @@ export async function generateOpenRouterAnalysis({ findings = [], pageFacts = {}
       schema: responseSchema,
       maxTokens: MAX_OUTPUT_TOKENS,
       timeoutMs: REQUEST_TIMEOUT_MS,
-    }, dependencies);
-    if (response.finishReason === 'length') throw invalidResponse('the response was cut off before it finished.');
-    const analysis = verifyEvidence(parseAnalysis(parseOpenRouterJson(response.text, 'analysis')), sources);
-    return { analysis, warnings: [], model: response.model };
+  };
+  const processResponse = (response, provider) => {
+    if (responseWasTruncated(response.finishReason)) throw invalidResponse('the response was cut off before it finished.');
+    const parsed = parseAiJson(response.text, 'SiteSense analysis', provider);
+    const analysis = verifyEvidence(parseAnalysis(parsed), sources);
+    return { analysis, model: response.model };
+  };
+  const callProvider = async (provider) => {
+    try {
+      const response = provider === 'openrouter'
+        ? await (dependencies.requestOpenRouter ?? requestOpenRouter)(aiRequest, dependencies)
+        : await (dependencies.requestGemini ?? requestGemini)(aiRequest, dependencies);
+      return processResponse(response, provider === 'openrouter' ? 'OpenRouter' : 'Gemini');
+    } catch (error) {
+      if (error instanceof AppError) throw error;
+      if (provider === 'openrouter') {
+        logOpenRouterFailure('site-recommendations', error);
+        throw mapOpenRouterError(error, 'SiteSense recommendations');
+      }
+      logGeminiFailure('site-recommendations', error);
+      throw mapGeminiError(error, 'SiteSense recommendations');
+    }
+  };
+
+  try {
+    return await runAiWithFallback('SiteSense recommendations', {
+      openrouter: () => callProvider('openrouter'),
+      gemini: () => callProvider('gemini'),
+    });
   } catch (error) {
-    if (error instanceof AppError) throw error;
-    logOpenRouterFailure('site-recommendations', error);
-    throw mapOpenRouterError(error, 'SiteSense recommendations');
+    if (error.code === 'AI_NOT_CONFIGURED') return { analysis: null, warnings: [error.message] };
+    throw error;
   }
 }

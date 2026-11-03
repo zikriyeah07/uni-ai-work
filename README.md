@@ -4,19 +4,19 @@ One university project workspace with three independent AI tools behind one land
 
 1. **AI CV Checker** reviews a PDF or text CV, returns an assessment score, and gives document-based suggestions.
 2. **AI Roadmap Generator** turns a goal, time period, available hours, and constraints into milestones and tasks.
-3. **SiteSense AI** audits a public website using real HTML analysis, Google PageSpeed Insights, OpenRouter recommendations, and PostgreSQL scan history.
+3. **SiteSense AI** audits a public website using real HTML analysis, Google PageSpeed Insights, Gemini or OpenRouter recommendations, and PostgreSQL scan history.
 
-The project selector is the root page (`/`). Each tool has its own route and API endpoint while sharing one React app, Express API, OpenRouter configuration, repository, and Vercel deployment.
+The project selector is the root page (`/`). Each tool has its own route and API endpoint while sharing one React app, Express API, Gemini and OpenRouter providers, repository, and Vercel deployment.
 
 ## Requirements and local setup
 
 - Node.js 20–24
 - pnpm 11.13.1
 - PostgreSQL (Neon works) for saved SiteSense scans
-- OpenRouter API key for all three AI tools
+- An OpenRouter API key, a Gemini API key, or both for all three AI tools
 - PageSpeed Insights API key for SiteSense (recommended)
 
-Create one root `.env` from `.env.example`. Set `OPENROUTER_API_KEY` for the CV checker, roadmap generator, and SiteSense recommendations. The default `OPENROUTER_MODEL=openrouter/free` automatically routes requests to available free models. You can pin a free model by setting a model ID ending in `:free`; paid model IDs are rejected by the server. Set `DATABASE_URL` and `DIRECT_URL` for SiteSense scan storage, plus `PAGESPEED_API_KEY` for full Lighthouse results. The server also reads `server/.env` as a local fallback for compatibility.
+Create one root `.env` from `.env.example`. Set `OPENROUTER_API_KEY`, `GEMINI_API_KEY`, or both. The default `AI_PROVIDER_ORDER="openrouter,gemini"` tries OpenRouter first and automatically falls back to Gemini if OpenRouter hits a limit, times out, or returns an invalid response. Change it to `gemini,openrouter` to reverse the order. At least one provider key is required; both keys are needed for failover. OpenRouter defaults to `OPENROUTER_MODEL=openrouter/free`; optional overrides must end in `:free`, and paid model IDs are rejected. Gemini defaults to `GEMINI_MODEL=gemini-3.5-flash-lite`. Set `DATABASE_URL` and `DIRECT_URL` for SiteSense scan storage, plus `PAGESPEED_API_KEY` for full Lighthouse results. The server also reads `server/.env` as a local fallback for compatibility.
 
 ```sh
 pnpm install
@@ -37,12 +37,15 @@ Set these server-side Environment Variables in the Vercel project:
 
 - `OPENROUTER_API_KEY`
 - `OPENROUTER_MODEL` (defaults to `openrouter/free`; optional free model IDs must end in `:free`)
+- `GEMINI_API_KEY`
+- `GEMINI_MODEL` (defaults to `gemini-3.5-flash-lite`)
+- `AI_PROVIDER_ORDER` (defaults to `openrouter,gemini`; reverse to `gemini,openrouter`)
 - `PAGESPEED_API_KEY`
 - `DATABASE_URL` and `DIRECT_URL` (Neon pooled and direct connection URLs)
 
 `PORT` and `CLIENT_ORIGIN` are local development settings; Vercel does not need them. There is no public `VITE_API_URL`. After configuring environment variables, deploy. Apply the Prisma schema to Neon once with `pnpm db:push` before using SiteSense history. CV documents and generated roadmaps are request-only and are not stored by this application; SiteSense scans are stored in PostgreSQL.
 
-The CV checker accepts PDF files up to 2.8 MB and `.txt` files up to 100 KB. PDFs use OpenRouter's free Cloudflare text extraction before inference; scanned PDFs that contain only images may not produce readable text. This avoids the paid OCR fallback. Vercel's function request body limit is 4.5 MB, so the CV upload cap leaves room for base64 and JSON overhead. OpenRouter's free models have shared usage limits, and Vercel function duration also applies.
+The CV checker accepts PDF files up to 2.8 MB and `.txt` files up to 100 KB. Gemini reads PDFs directly; OpenRouter uses its Cloudflare text extraction plugin. Scanned PDFs may still fail to produce readable text. Vercel's function request body limit is 4.5 MB, so the CV upload cap leaves room for base64 and JSON overhead. Free provider tiers have shared usage limits, and Vercel function duration also applies.
 
 ## Features and routes
 
@@ -57,7 +60,7 @@ Shared API routes include `GET /api/health`, `GET /api/scans`, and `GET /api/sca
 ### AI CV Checker
 
 - Accepts PDF or text CV content, with an optional target role.
-- Uses OpenRouter's OpenAI-compatible Chat Completions API and the server-side `OPENROUTER_API_KEY` / `OPENROUTER_MODEL` values.
+- Tries the configured AI providers in order and falls back automatically when one is unavailable. Both Gemini and OpenRouter use structured output validation.
 - Requests a structured score, summary, strengths, evidence-based improvements, and next steps.
 - Validates the score, response shape, priorities, and text-file evidence. The model is instructed not to invent qualifications, metrics, or achievements.
 - Handles missing API keys, quota limits, timeouts, and invalid model responses with readable errors.
@@ -74,7 +77,7 @@ Shared API routes include `GET /api/health`, `GET /api/scans`, and `GET /api/sca
 - Validates public URLs and blocks private/reserved network destinations and unsafe redirects.
 - Fetches and parses HTML with Cheerio; checks SEO metadata, headings, images, internal links, `robots.txt`, and `sitemap.xml`.
 - Requests real PageSpeed Insights data for mobile or desktop, including Lighthouse categories and available Core Web Vitals.
-- Sends actual audit findings and PageSpeed data to OpenRouter. Recommendations are checked against evidence before being saved.
+- Sends actual audit findings and PageSpeed data to the configured AI providers. Recommendations are checked against evidence before being saved.
 - Saves website scan results, technical findings, and AI recommendations through Prisma.
 
 ## Tests
@@ -85,11 +88,11 @@ The server suite covers URL safety, HTML parsing, PageSpeed mapping, AI evidence
 pnpm --filter @sitesense/server test
 ```
 
-AI-tool tests stub OpenRouter requests to verify request construction and error handling without consuming model quota. A live website scan requires outbound network access, configured OpenRouter and PageSpeed keys, and Neon configuration to verify persistence against the database.
+AI-tool tests stub provider requests to verify request construction, fallback, and error handling without consuming model quota. A live website scan requires outbound network access, at least one configured AI key, a PageSpeed key, and Neon configuration to verify persistence against the database.
 
 ## Security and limitations
 
 - Keep `.env` out of version control. API keys stay on the server and are not included in the frontend bundle.
-- CV file contents are sent to OpenRouter for analysis. The app does not write CV documents or roadmaps to its database.
+- CV file contents are sent to the first configured provider and may also be sent to the fallback provider if the first fails. The app does not write CV documents or roadmaps to its database. Gemini's free tier may use submitted content to improve Google products; review the provider terms before enabling it for sensitive CVs.
 - SiteSense does not include user accounts; anyone with the deployment URL can use its public endpoints. Per-route in-memory limits reduce accidental bursts but are not a distributed abuse-prevention system.
 - Vercel function duration, payload limits, and Google API quotas apply to requests.

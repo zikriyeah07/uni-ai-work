@@ -37,7 +37,7 @@ export default function Report() {
   const analysis = scan.aiAnalysis;
   const issues = scan.issues ?? scan.technicalFindings?.findings ?? [];
   const warnings = scan.serviceWarnings ?? [];
-  const aiWarning = warnings.find((warning) => /openrouter|ai recommendations/i.test(warning));
+  const aiWarning = warnings.find((warning) => /gemini|openrouter|ai recommendations/i.test(warning));
   const pageSpeedWarning = warnings.find((warning) => /pagespeed/i.test(warning));
   const pageFacts = scan.technicalFindings?.pageFacts ?? {};
   const pageSpeed = scan.pageSpeedData ?? {};
@@ -104,7 +104,7 @@ export default function Report() {
           {analysis ? <>
             <p className="ai-summary">{analysis.websiteSummary}</p><p className="ai-assessment">{analysis.overallAssessment}</p>
             {analysis.topProblems?.length > 0 ? <div className="top-problems"><div className="section-label-row"><h3>Most important problems</h3><span>{analysis.topProblems.length} evidence-linked</span></div>{analysis.topProblems.map((problem, index) => <TopProblem key={problem.evidenceRef ?? problem.title ?? index} problem={problem} index={index} />)}</div> : <div className="quiet-empty">No high-priority issues were returned by the available audit data.</div>}
-          </> : <div className="service-empty"><Sparkles size={20} /><div><b>AI recommendations unavailable</b><span>{aiWarning || 'Configure OPENROUTER_API_KEY and OPENROUTER_MODEL, then run another scan.'}</span></div></div>}
+          </> : <div className="service-empty"><Sparkles size={20} /><div><b>AI recommendations unavailable</b><span>{aiWarning || 'Configure at least one AI provider key, then run another scan.'}</span></div></div>}
         </section>
       </section>
 
@@ -127,12 +127,12 @@ export default function Report() {
 
       <section className="panel recommendations-panel">
         <PanelHeading title="AI recommendations" subtitle="Fixes grounded in your scan results" icon={Sparkles} />
-        {recommendations.length > 0 ? <div className="recommendation-grid">{recommendations.map((item, index) => <RecommendationCard key={`${item.category}-${item.title}-${index}`} item={item} />)}</div> : <div className="service-empty"><Sparkles size={20} /><div><b>No recommendations available</b><span>{aiWarning || 'OpenRouter did not return validated advice for this scan. Technical findings remain available above.'}</span></div></div>}
+        {recommendations.length > 0 ? <div className="recommendation-grid">{recommendations.map((item, index) => <RecommendationCard key={`${item.category}-${item.title}-${index}`} item={item} />)}</div> : <div className="service-empty"><Sparkles size={20} /><div><b>No recommendations available</b><span>{aiWarning || 'The AI providers did not return validated advice for this scan. Technical findings remain available above.'}</span></div></div>}
       </section>
 
       <section className="panel action-plan-panel">
         <PanelHeading title="Recommended action plan" subtitle="A prioritized sequence based on the findings" icon={Zap} trailing={<span className="finding-count">{actionPlan.length} {actionPlan.length === 1 ? 'action' : 'actions'}</span>} />
-        {actionPlan.length > 0 ? <ol className="action-plan-list">{actionPlan.map((item, index) => <li key={`${item.title}-${index}`}><span className="action-plan-number">{String(index + 1).padStart(2, '0')}</span><div className="action-plan-content"><div className="action-plan-heading"><b>{item.title}</b><span className={`priority-tag ${priorityClass(item.priority)}`}>{item.priority}</span><span className="recommendation-category">{item.category}</span></div><p>{item.action}</p>{item.evidence?.length > 0 && <small>Based on: {item.evidence.map((source) => source.title).join(' · ')}</small>}</div></li>)}</ol> : <div className="quiet-empty">A recommended sequence will appear when OpenRouter returns evidence-linked actions.</div>}
+        {actionPlan.length > 0 ? <ol className="action-plan-list">{actionPlan.map((item, index) => <li key={`${item.title}-${index}`}><span className="action-plan-number">{String(index + 1).padStart(2, '0')}</span><div className="action-plan-content"><div className="action-plan-heading"><b>{item.title}</b><span className={`priority-tag ${priorityClass(item.priority)}`}>{item.priority}</span><span className="recommendation-category">{item.category}</span></div><p>{item.action}</p>{item.evidence?.length > 0 && <small>Based on: {item.evidence.map((source) => source.title).join(' · ')}</small>}</div></li>)}</ol> : <div className="quiet-empty">A recommended sequence appears when an AI provider returns evidence-linked actions.</div>}
       </section>
 
       {(pageSpeed.opportunities?.length > 0 || pageSpeed.diagnostics?.length > 0) && <section className="panel opportunities-panel"><PanelHeading title="PageSpeed opportunities" subtitle="Optimization opportunities and diagnostics returned by Lighthouse" icon={Gauge} /><div className="opportunity-list">{[...(pageSpeed.opportunities ?? []), ...(pageSpeed.diagnostics ?? [])].map((item, index) => <div className="opportunity-row" key={`${item.id ?? item.title}-${index}`}><span className="opportunity-dot" /><div><b>{item.title}</b><span>{stripMarkup(item.description)}</span></div><small>{item.displayValue || ''}</small></div>)}</div></section>}

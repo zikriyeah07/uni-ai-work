@@ -5,11 +5,24 @@ import { generateRoadmap, validateRoadmap, validateRoadmapRequest } from '../src
 
 const originalKey = process.env.OPENROUTER_API_KEY;
 const originalModel = process.env.OPENROUTER_MODEL;
+const originalGeminiKey = process.env.GEMINI_API_KEY;
+const originalGeminiModel = process.env.GEMINI_MODEL;
+const originalProviderOrder = process.env.AI_PROVIDER_ORDER;
 function restoreEnv() {
   if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
   else process.env.OPENROUTER_API_KEY = originalKey;
   if (originalModel === undefined) delete process.env.OPENROUTER_MODEL;
   else process.env.OPENROUTER_MODEL = originalModel;
+  if (originalGeminiKey === undefined) delete process.env.GEMINI_API_KEY;
+  else process.env.GEMINI_API_KEY = originalGeminiKey;
+  if (originalGeminiModel === undefined) delete process.env.GEMINI_MODEL;
+  else process.env.GEMINI_MODEL = originalGeminiModel;
+  if (originalProviderOrder === undefined) delete process.env.AI_PROVIDER_ORDER;
+  else process.env.AI_PROVIDER_ORDER = originalProviderOrder;
+}
+function useOpenRouterOnly() {
+  process.env.AI_PROVIDER_ORDER = 'openrouter,gemini';
+  delete process.env.GEMINI_API_KEY;
 }
 
 function cvResult(overrides = {}) {
@@ -43,6 +56,7 @@ test('validates uploaded CV content and rejects invalid types and malformed base
 });
 
 test('analyzes a PDF through OpenRouter and validates the returned assessment', async (t) => {
+  useOpenRouterOnly();
   process.env.OPENROUTER_API_KEY = 'test-key';
   process.env.OPENROUTER_MODEL = 'openrouter/free';
   t.after(restoreEnv);
@@ -62,6 +76,7 @@ test('analyzes a PDF through OpenRouter and validates the returned assessment', 
 });
 
 test('checks text CV evidence against the actual uploaded content', async (t) => {
+  useOpenRouterOnly();
   process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
   const text = 'Built a REST API for coursework and documented endpoints for a student project.';
@@ -75,6 +90,7 @@ test('checks text CV evidence against the actual uploaded content', async (t) =>
 });
 
 test('rejects invalid CV score and maps OpenRouter limit and timeout failures', async (t) => {
+  useOpenRouterOnly();
   process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
   assert.throws(() => validateCvAnalysis(cvResult({ score: 101 })), { code: 'CV_INVALID_RESPONSE' });
@@ -82,6 +98,28 @@ test('rejects invalid CV score and maps OpenRouter limit and timeout failures', 
   const input = { fileName: 'resume.pdf', mimeType: 'application/pdf', base64: pdf };
   await assert.rejects(analyzeCv(input, { requestOpenRouter: async () => { throw Object.assign(new Error('rate limit'), { status: 429 }); } }), { code: 'OPENROUTER_RATE_LIMIT' });
   await assert.rejects(analyzeCv(input, { requestOpenRouter: async () => { throw Object.assign(new Error('request timed out'), { name: 'TimeoutError' }); } }), { code: 'OPENROUTER_TIMEOUT' });
+});
+
+test('falls back to Gemini when OpenRouter is unavailable for a CV review', async (t) => {
+  process.env.OPENROUTER_API_KEY = 'openrouter-test-key';
+  process.env.GEMINI_API_KEY = 'gemini-test-key';
+  process.env.AI_PROVIDER_ORDER = 'openrouter,gemini';
+  t.after(restoreEnv);
+  const calls = [];
+  const text = 'Built a REST API for coursework and documented endpoints for a student project.';
+  const result = await analyzeCv({ fileName: 'resume.txt', mimeType: 'text/plain', base64: Buffer.from(text).toString('base64') }, {
+    requestOpenRouter: async () => { calls.push('openrouter'); throw Object.assign(new Error('rate limit'), { status: 429 }); },
+    requestGemini: async (request) => {
+      calls.push('gemini');
+      assert.equal(request.schemaName, 'cv_review');
+      return { text: JSON.stringify(cvResult()), model: 'gemini-3.5-flash-lite', finishReason: 'STOP' };
+    },
+  });
+  assert.deepEqual(calls, ['openrouter', 'gemini']);
+  assert.equal(result.analysis.score, 76);
+  assert.equal(result.provider, 'gemini');
+  assert.equal(result.fallbackUsed, true);
+  assert.match(result.warnings[0], /OpenRouter did not respond/);
 });
 
 const roadmapOutput = {
@@ -103,6 +141,7 @@ test('validates roadmap input and enforces bounded ordered milestones', () => {
 });
 
 test('generates a roadmap through the configured OpenRouter model and handles free-model limits', async (t) => {
+  useOpenRouterOnly();
   process.env.OPENROUTER_API_KEY = 'test-key';
   process.env.OPENROUTER_MODEL = 'openrouter/free';
   t.after(restoreEnv);
@@ -118,4 +157,23 @@ test('generates a roadmap through the configured OpenRouter model and handles fr
   await assert.rejects(generateRoadmap({ goal: 'Learn front-end development', durationMonths: 6, hoursPerWeek: 5 }, {
     requestOpenRouter: async () => { throw Object.assign(new Error('rate limit'), { status: 429 }); },
   }), { code: 'OPENROUTER_RATE_LIMIT' });
+});
+
+test('falls back to Gemini when OpenRouter is unavailable for roadmap generation', async (t) => {
+  process.env.OPENROUTER_API_KEY = 'openrouter-test-key';
+  process.env.GEMINI_API_KEY = 'gemini-test-key';
+  process.env.AI_PROVIDER_ORDER = 'openrouter,gemini';
+  t.after(restoreEnv);
+  const calls = [];
+  const result = await generateRoadmap({ goal: 'Prepare for a junior frontend role', durationMonths: 6, hoursPerWeek: 5 }, {
+    requestOpenRouter: async () => { calls.push('openrouter'); throw Object.assign(new Error('provider unavailable'), { status: 503 }); },
+    requestGemini: async () => {
+      calls.push('gemini');
+      return { text: JSON.stringify(roadmapOutput), model: 'gemini-3.5-flash-lite', finishReason: 'STOP' };
+    },
+  });
+  assert.deepEqual(calls, ['openrouter', 'gemini']);
+  assert.equal(result.roadmap.milestones.length, 2);
+  assert.equal(result.provider, 'gemini');
+  assert.equal(result.fallbackUsed, true);
 });

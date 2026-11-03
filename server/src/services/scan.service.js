@@ -6,7 +6,9 @@ function calculatedOverall(pageSpeed) {
 
 function readableServiceError(error, serviceName) {
   let detail = typeof error?.message === 'string' ? error.message : '';
-  if (process.env.OPENROUTER_API_KEY) detail = detail.replaceAll(process.env.OPENROUTER_API_KEY, '[redacted]');
+  for (const secret of [process.env.OPENROUTER_API_KEY, process.env.GEMINI_API_KEY].filter((value) => typeof value === 'string' && value.length > 5)) {
+    detail = detail.replaceAll(secret, '[redacted]');
+  }
   detail = detail.replace(/\s+/g, ' ').trim().slice(0, 320);
   return detail ? `${serviceName} failed: ${detail}` : `${serviceName} failed without returning an error message.`;
 }
@@ -14,7 +16,7 @@ function readableServiceError(error, serviceName) {
 export async function executeScan({ url, device, onProgress = () => {} }, dependencies = {}) {
   const auditWebsite = dependencies.auditWebsite ?? (await import('./site-audit.service.js')).auditWebsite;
   const runPageSpeed = dependencies.runPageSpeed ?? (await import('./pagespeed.service.js')).runPageSpeed;
-  const generateOpenRouterAnalysis = dependencies.generateOpenRouterAnalysis ?? (await import('./openrouter.service.js')).generateOpenRouterAnalysis;
+  const generateAiAnalysis = dependencies.generateAiAnalysis ?? (await import('./ai-analysis.service.js')).generateAiAnalysis;
   const getPrisma = dependencies.getPrisma ?? (await import('../db/prisma.js')).getPrisma;
   onProgress({ stage: 'html', status: 'running', message: 'Validating the public URL and starting the HTML audit.' });
   const warnings = [];
@@ -41,10 +43,10 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
     onProgress({ stage: 'pagespeed', status: 'unavailable', message: `${message} Continuing with the HTML audit.` });
   }
 
-  onProgress({ stage: 'openrouter', status: 'running', message: 'Generating recommendations from confirmed findings.' });
+  onProgress({ stage: 'ai', status: 'running', message: 'Generating recommendations from confirmed findings.' });
   let aiAnalysis = null;
   try {
-    const result = await generateOpenRouterAnalysis({
+    const result = await generateAiAnalysis({
       url: audit.finalUrl,
       device,
       findings: audit.findings,
@@ -54,14 +56,14 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
     aiAnalysis = result.analysis;
     warnings.push(...result.warnings);
     onProgress({
-      stage: 'openrouter',
+      stage: 'ai',
       status: aiAnalysis ? 'complete' : 'unavailable',
       message: result.analysis ? 'Evidence-based recommendations are ready.' : (result.warnings[0] ?? 'AI recommendations are unavailable.'),
     });
   } catch (error) {
-    const message = `${readableServiceError(error, 'OpenRouter recommendations')} Check OPENROUTER_API_KEY, OPENROUTER_MODEL, and the free-model limits.`;
+    const message = `${readableServiceError(error, 'AI recommendations')} Check the configured provider keys, models, and free-tier limits.`;
     warnings.push(message);
-    onProgress({ stage: 'openrouter', status: 'unavailable', message });
+    onProgress({ stage: 'ai', status: 'unavailable', message });
   }
 
   let prisma = null;
