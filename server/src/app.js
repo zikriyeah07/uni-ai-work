@@ -56,6 +56,27 @@ export function createApp({ expressFactory = express, spaIndexPath = null } = {}
   app.use('/api', apiRoutes);
 
   if (spaIndexPath) {
+    const assetsDir = path.resolve(path.dirname(spaIndexPath), 'assets');
+    // Vercel normally serves public assets from its CDN. Including a safe
+    // function fallback also covers generated assets when deployment settings
+    // or a static output configuration prevent the CDN from finding them.
+    app.use('/assets', (req, res, next) => {
+      let assetPath;
+      try {
+        const requestedPath = decodeURIComponent(req.path).replace(/^\/+/, '');
+        assetPath = path.resolve(assetsDir, requestedPath);
+      } catch (error) {
+        return next(error);
+      }
+      const relativePath = path.relative(assetsDir, assetPath);
+      if (!relativePath || relativePath.startsWith('..') || path.isAbsolute(relativePath)) return next();
+      res.sendFile(assetPath, { dotfiles: 'deny' }, (error) => {
+        if (!error) return;
+        if (error.statusCode === 404 || error.code === 'ENOENT') return next();
+        next(error);
+      });
+    });
+
     app.use((req, res, next) => {
       const isApiPath = req.path === '/api' || req.path.startsWith('/api/');
       const isSpaNavigation = req.method === 'GET'
