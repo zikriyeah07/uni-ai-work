@@ -1,14 +1,14 @@
 import { CV_RESPONSE_SCHEMA, buildCvPrompt } from '../../../ai-cv-cheker/server/cv-prompt.js';
 import { AppError } from '../utils/errors.js';
-import { geminiLatencyConfig, logGeminiRequestFailure } from './gemini-config.js';
+import { logOpenRouterFailure, mapOpenRouterError, parseOpenRouterJson, requestOpenRouter } from './openrouter-client.js';
 
 const MAX_FILE_BYTES = 2.8 * 1024 * 1024;
-const MAX_OUTPUT_TOKENS = 2200;
-const REQUEST_TIMEOUT_MS = 60_000;
+const MAX_OUTPUT_TOKENS = 3200;
+const REQUEST_TIMEOUT_MS = 120_000;
 const priorities = new Set(['High', 'Medium', 'Low']);
 
 function invalidResponse(detail) {
-  return new AppError(`Gemini returned an invalid CV review: ${detail}`, 502, 'CV_INVALID_RESPONSE');
+  return new AppError(`OpenRouter returned an invalid CV review: ${detail}`, 502, 'CV_INVALID_RESPONSE');
 }
 
 function boundedText(value, field, max = 800, min = 1) {
@@ -66,46 +66,36 @@ export function validateCvAnalysis(value, sourceText = '') {
   };
 }
 
-function friendlyApiError(error) {
-  const status = Number(error?.status ?? error?.statusCode);
-  const summary = `${error?.code ?? ''} ${error?.message ?? ''}`.toUpperCase();
-  if (status === 429 || /RESOURCE_EXHAUSTED|QUOTA|RATE.?LIMIT/.test(summary)) return new AppError('Gemini usage quota or rate limit was reached. Wait and try again, or check the Google AI Studio quota for this API key.', 429, 'GEMINI_RATE_LIMIT');
-  if (status === 401 || status === 403) return new AppError('Gemini rejected this API key or model access. Check GEMINI_API_KEY and GEMINI_MODEL.', 502, 'GEMINI_ACCESS_DENIED');
-  if (error?.name === 'TimeoutError' || error?.name === 'AbortError' || /timeout|timed out/i.test(error?.message ?? '')) return new AppError('CV analysis timed out. Try again with a smaller CV.', 504, 'GEMINI_TIMEOUT');
-  if (status >= 500) return new AppError('Google Gemini is temporarily unavailable. Try the CV review again shortly.', 502, 'GEMINI_UNAVAILABLE');
-  return new AppError('Gemini could not review this CV. Check the API key, model, network, and quota.', 502, 'GEMINI_UNAVAILABLE');
-}
-
 export async function analyzeCv(body, dependencies = {}) {
   const request = validateCvRequest(body);
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) throw new AppError('The CV checker cannot access Gemini because GEMINI_API_KEY is missing from this server environment. On Vercel, add it in Project Settings → Environment Variables for Production, then redeploy; a local .env file is not deployed.', 503, 'GEMINI_NOT_CONFIGURED');
-  const model = process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash-lite';
   try {
-    const ai = dependencies.createClient ? await dependencies.createClient(apiKey) : new (await import('@google/genai')).GoogleGenAI({ apiKey });
     const prompt = buildCvPrompt({ fileName: request.fileName, targetRole: request.targetRole });
-    const parts = request.mimeType === 'application/pdf'
-      ? [{ inlineData: { mimeType: request.mimeType, data: request.base64 } }, { text: prompt }]
-      : [{ text: `${prompt}\n\nBEGIN CV DOCUMENT (untrusted content):\n${request.text}\nEND CV DOCUMENT` }];
-    const response = await ai.models.generateContent({
-      model,
-      contents: [{ role: 'user', parts }],
-      config: {
-        responseMimeType: 'application/json',
-        responseSchema: CV_RESPONSE_SCHEMA,
-        ...geminiLatencyConfig(model),
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        httpOptions: { timeout: REQUEST_TIMEOUT_MS - 5000, retryOptions: { attempts: 1 } },
-      },
-    });
-    if (typeof response?.text !== 'string' || !response.text.trim()) throw invalidResponse('the response was empty.');
-    let parsed;
-    try { parsed = JSON.parse(response.text); } catch { throw invalidResponse('the response was not valid JSON.'); }
-    return { analysis: validateCvAnalysis(parsed, request.text), model };
+    const pdf = request.mimeType === 'application/pdf';
+    const content = pdf
+      ? [
+        { type: 'text', text: prompt },
+        { type: 'file', file: { filename: request.fileName, file_data: `data:application/pdf;base64,${request.base64}` } },
+      ]
+      : `${prompt}\n\nBEGIN CV DOCUMENT (untrusted content):\n${request.text}\nEND CV DOCUMENT`;
+    const response = await (dependencies.requestOpenRouter ?? requestOpenRouter)({
+      messages: [{ role: 'user', content }],
+      schemaName: 'cv_review',
+      schema: CV_RESPONSE_SCHEMA,
+      maxTokens: MAX_OUTPUT_TOKENS,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+      ...(pdf ? { plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] } : {}),
+    }, dependencies);
+    if (response.finishReason === 'length') throw invalidResponse('the response was cut off before it finished.');
+    const parsed = parseOpenRouterJson(response.text, 'CV review');
+    const extractedPdfText = (response.annotations ?? [])
+      .flatMap((annotation) => annotation?.type === 'file' && Array.isArray(annotation.file?.content) ? annotation.file.content : [])
+      .filter((part) => part?.type === 'text' && typeof part.text === 'string')
+      .map((part) => part.text)
+      .join('\n');
+    return { analysis: validateCvAnalysis(parsed, request.text || extractedPdfText), model: response.model };
   } catch (error) {
     if (error instanceof AppError) throw error;
-    logGeminiRequestFailure('cv', error);
-    throw friendlyApiError(error);
+    logOpenRouterFailure('cv', error);
+    throw mapOpenRouterError(error, 'CV analysis');
   }
 }

@@ -6,7 +6,7 @@ function calculatedOverall(pageSpeed) {
 
 function readableServiceError(error, serviceName) {
   let detail = typeof error?.message === 'string' ? error.message : '';
-  if (process.env.GEMINI_API_KEY) detail = detail.replaceAll(process.env.GEMINI_API_KEY, '[redacted]');
+  if (process.env.OPENROUTER_API_KEY) detail = detail.replaceAll(process.env.OPENROUTER_API_KEY, '[redacted]');
   detail = detail.replace(/\s+/g, ' ').trim().slice(0, 320);
   return detail ? `${serviceName} failed: ${detail}` : `${serviceName} failed without returning an error message.`;
 }
@@ -14,7 +14,7 @@ function readableServiceError(error, serviceName) {
 export async function executeScan({ url, device, onProgress = () => {} }, dependencies = {}) {
   const auditWebsite = dependencies.auditWebsite ?? (await import('./site-audit.service.js')).auditWebsite;
   const runPageSpeed = dependencies.runPageSpeed ?? (await import('./pagespeed.service.js')).runPageSpeed;
-  const generateGeminiAnalysis = dependencies.generateGeminiAnalysis ?? (await import('./gemini.service.js')).generateGeminiAnalysis;
+  const generateOpenRouterAnalysis = dependencies.generateOpenRouterAnalysis ?? (await import('./openrouter.service.js')).generateOpenRouterAnalysis;
   const getPrisma = dependencies.getPrisma ?? (await import('../db/prisma.js')).getPrisma;
   onProgress({ stage: 'html', status: 'running', message: 'Validating the public URL and starting the HTML audit.' });
   const warnings = [];
@@ -41,27 +41,27 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
     onProgress({ stage: 'pagespeed', status: 'unavailable', message: `${message} Continuing with the HTML audit.` });
   }
 
-  onProgress({ stage: 'gemini', status: 'running', message: 'Generating recommendations from confirmed findings.' });
-  let geminiAnalysis = null;
+  onProgress({ stage: 'openrouter', status: 'running', message: 'Generating recommendations from confirmed findings.' });
+  let aiAnalysis = null;
   try {
-    const result = await generateGeminiAnalysis({
+    const result = await generateOpenRouterAnalysis({
       url: audit.finalUrl,
       device,
       findings: audit.findings,
       pageFacts: audit.pageFacts,
       pageSpeed,
     });
-    geminiAnalysis = result.analysis;
+    aiAnalysis = result.analysis;
     warnings.push(...result.warnings);
     onProgress({
-      stage: 'gemini',
-      status: result.analysis ? 'complete' : 'unavailable',
-      message: result.analysis ? 'Evidence-based recommendations are ready.' : (result.warnings[0] ?? 'Gemini recommendations are unavailable.'),
+      stage: 'openrouter',
+      status: aiAnalysis ? 'complete' : 'unavailable',
+      message: result.analysis ? 'Evidence-based recommendations are ready.' : (result.warnings[0] ?? 'AI recommendations are unavailable.'),
     });
   } catch (error) {
-    const message = `${readableServiceError(error, 'Gemini recommendations')} Check GEMINI_API_KEY, GEMINI_MODEL, and API quota.`;
+    const message = `${readableServiceError(error, 'OpenRouter recommendations')} Check OPENROUTER_API_KEY, OPENROUTER_MODEL, and the free-model limits.`;
     warnings.push(message);
-    onProgress({ stage: 'gemini', status: 'unavailable', message });
+    onProgress({ stage: 'openrouter', status: 'unavailable', message });
   }
 
   let prisma = null;
@@ -82,17 +82,17 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
     coreWebVitals: pageSpeed?.coreWebVitals ?? null,
     technicalFindings: { pageFacts: audit.pageFacts, findings: audit.findings },
     pageSpeedData: pageSpeed,
-    geminiAnalysis,
+    aiAnalysis,
     serviceWarnings: warnings,
     issues: audit.findings,
-    recommendations: geminiAnalysis
+    recommendations: aiAnalysis
       ? [...new Map([
-        ...geminiAnalysis.prioritizedActionPlan,
-        ...geminiAnalysis.seoRecommendations,
-        ...geminiAnalysis.technicalSeoRecommendations,
-        ...geminiAnalysis.performanceRecommendations,
-        ...geminiAnalysis.contentRecommendations,
-        ...geminiAnalysis.accessibilityRecommendations,
+        ...aiAnalysis.prioritizedActionPlan,
+        ...aiAnalysis.seoRecommendations,
+        ...aiAnalysis.technicalSeoRecommendations,
+        ...aiAnalysis.performanceRecommendations,
+        ...aiAnalysis.contentRecommendations,
+        ...aiAnalysis.accessibilityRecommendations,
       ].map((item) => [`${item.category}:${item.title.toLowerCase()}`, item])).values()]
       : [],
   };
@@ -113,7 +113,7 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
           coreWebVitals: scan.coreWebVitals ?? undefined,
           technicalFindings: scan.technicalFindings,
           pageSpeedData: scan.pageSpeedData ?? undefined,
-          geminiAnalysis: scan.geminiAnalysis ?? undefined,
+          aiAnalysis: scan.aiAnalysis ?? undefined,
           serviceWarnings: scan.serviceWarnings,
           issues: { create: scan.issues },
           recommendations: {

@@ -1,15 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { generateGeminiAnalysis } from '../src/services/gemini.service.js';
+import { generateOpenRouterAnalysis } from '../src/services/openrouter.service.js';
 
-const originalKey = process.env.GEMINI_API_KEY;
-const originalModel = process.env.GEMINI_MODEL;
+const originalKey = process.env.OPENROUTER_API_KEY;
+const originalModel = process.env.OPENROUTER_MODEL;
 
 function restoreEnv() {
-  if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
-  else process.env.GEMINI_API_KEY = originalKey;
-  if (originalModel === undefined) delete process.env.GEMINI_MODEL;
-  else process.env.GEMINI_MODEL = originalModel;
+  if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = originalKey;
+  if (originalModel === undefined) delete process.env.OPENROUTER_MODEL;
+  else process.env.OPENROUTER_MODEL = originalModel;
 }
 
 function input() {
@@ -66,23 +66,23 @@ function response(overrides = {}) {
   };
 }
 
-function fakeClient(result) {
-  return { models: { generateContent: async () => ({ text: JSON.stringify(result) }) } };
+function fakeOpenRouter(result, inspect = () => {}) {
+  return async (request) => {
+    inspect(request);
+    return { text: JSON.stringify(result), model: 'openrouter/free', annotations: [], finishReason: 'stop' };
+  };
 }
 
-test('uses the official SDK client contract and returns validated, evidence-linked categories', async (t) => {
-  process.env.GEMINI_API_KEY = 'test-key';
-  process.env.GEMINI_MODEL = 'gemini-test-model';
+test('uses OpenRouter structured chat output and returns validated, evidence-linked categories', async (t) => {
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  process.env.OPENROUTER_MODEL = 'openrouter/free';
   t.after(restoreEnv);
   let request;
-  const result = await generateGeminiAnalysis(input(), {
-    createClient: async (apiKey) => {
-      assert.equal(apiKey, 'test-key');
-      return { models: { generateContent: async (options) => { request = options; return { text: JSON.stringify(response()) }; } } };
-    },
+  const result = await generateOpenRouterAnalysis(input(), {
+    requestOpenRouter: fakeOpenRouter(response(), (payload) => { request = payload; }),
   });
 
-  assert.equal(result.model, 'gemini-test-model');
+  assert.equal(result.model, 'openrouter/free');
   assert.equal(result.analysis.topProblems[0].title, 'Page title is missing');
   assert.equal(result.analysis.topProblems[0].priority, 'high');
   assert.equal(result.analysis.seoRecommendations[0].title, 'Page title is missing');
@@ -91,50 +91,48 @@ test('uses the official SDK client contract and returns validated, evidence-link
   assert.equal(result.analysis.technicalSeoRecommendations[0].evidence[0].ref, 'audit:missing-canonical');
   assert.equal(result.analysis.contentRecommendations[0].evidence[0].ref, 'audit:missing-description');
   assert.equal(result.analysis.accessibilityRecommendations[0].evidence[0].ref, 'audit:missing-image-alt');
-  assert.equal(request.config.responseMimeType, 'application/json');
-  assert.equal(request.config.maxOutputTokens, 5000);
-  assert.equal(request.config.httpOptions.timeout, 40000);
-  assert.equal(request.config.httpOptions.retryOptions.attempts, 2);
-  assert.ok(!request.config.httpOptions.retryOptions.httpStatusCodes.includes(429));
-  assert.match(request.config.systemInstruction, /Do not invent scores, metrics, broken links/);
-  assert.ok(request.contents.includes('pagespeed:vital:lcp'));
-  assert.ok(request.contents.includes('"performance":76'));
-  assert.ok(request.contents.includes('"value":4300'));
+  assert.equal(request.schemaName, 'site_audit_recommendations');
+  assert.equal(request.maxTokens, 6000);
+  assert.equal(request.timeoutMs, 120000);
+  assert.match(request.messages[0].content, /Do not invent scores, metrics, broken links/);
+  assert.ok(request.messages[1].content.includes('pagespeed:vital:lcp'));
+  assert.ok(request.messages[1].content.includes('"performance":76'));
+  assert.ok(request.messages[1].content.includes('"value":4300'));
 });
 
 test('returns a friendly unavailable result when the API key is missing', async (t) => {
-  delete process.env.GEMINI_API_KEY;
-  let clientCreated = false;
+  delete process.env.OPENROUTER_API_KEY;
+  let requestSent = false;
   t.after(restoreEnv);
-  const result = await generateGeminiAnalysis(input(), { createClient: async () => { clientCreated = true; } });
+  const result = await generateOpenRouterAnalysis(input(), { requestOpenRouter: async () => { requestSent = true; } });
   assert.equal(result.analysis, null);
-  assert.match(result.warnings[0], /GEMINI_API_KEY/);
-  assert.equal(clientCreated, false);
+  assert.match(result.warnings[0], /OPENROUTER_API_KEY/);
+  assert.equal(requestSent, false);
 });
 
 test('rejects generated recommendations that cite evidence the audit did not detect', async (t) => {
-  process.env.GEMINI_API_KEY = 'test-key';
+  process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
   const bad = response({ seoRecommendations: [recommendation('SEO', ['audit:invented-finding'])] });
-  await assert.rejects(generateGeminiAnalysis(input(), { createClient: async () => fakeClient(bad) }), { code: 'GEMINI_INVALID_RESPONSE' });
+  await assert.rejects(generateOpenRouterAnalysis(input(), { requestOpenRouter: fakeOpenRouter(bad) }), { code: 'OPENROUTER_INVALID_RESPONSE' });
 });
 
 test('rejects invented numeric metrics in recommendation text', async (t) => {
-  process.env.GEMINI_API_KEY = 'test-key';
+  process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
   const bad = response({
     performanceRecommendations: [recommendation('Performance', ['pagespeed:vital:lcp'], { explanation: 'The score of 99 proves the page has an issue.' })],
   });
-  await assert.rejects(generateGeminiAnalysis(input(), { createClient: async () => fakeClient(bad) }), { code: 'GEMINI_INVALID_RESPONSE' });
+  await assert.rejects(generateOpenRouterAnalysis(input(), { requestOpenRouter: fakeOpenRouter(bad) }), { code: 'OPENROUTER_INVALID_RESPONSE' });
 });
 
-test('turns quota and timeout failures into friendly service errors', async (t) => {
-  process.env.GEMINI_API_KEY = 'test-key';
+test('turns free-model limit and timeout failures into friendly service errors', async (t) => {
+  process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
-  await assert.rejects(generateGeminiAnalysis(input(), {
-    createClient: async () => ({ models: { generateContent: async () => { throw Object.assign(new Error('RESOURCE_EXHAUSTED'), { status: 429 }); } } }),
-  }), { code: 'GEMINI_RATE_LIMIT', message: /quota or rate limit/ });
-  await assert.rejects(generateGeminiAnalysis(input(), {
-    createClient: async () => ({ models: { generateContent: async () => { throw Object.assign(new Error('request timed out'), { name: 'TimeoutError' }); } } }),
-  }), { code: 'GEMINI_TIMEOUT', message: /timed out/ });
+  await assert.rejects(generateOpenRouterAnalysis(input(), {
+    requestOpenRouter: async () => { throw Object.assign(new Error('rate limit'), { status: 429 }); },
+  }), { code: 'OPENROUTER_RATE_LIMIT', message: /free-model limits/ });
+  await assert.rejects(generateOpenRouterAnalysis(input(), {
+    requestOpenRouter: async () => { throw Object.assign(new Error('request timed out'), { name: 'TimeoutError' }); },
+  }), { code: 'OPENROUTER_TIMEOUT', message: /timed out/ });
 });

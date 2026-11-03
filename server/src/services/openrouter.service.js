@@ -1,9 +1,8 @@
 import { AppError } from '../utils/errors.js';
-import { geminiLatencyConfig, logGeminiRequestFailure } from './gemini-config.js';
+import { logOpenRouterFailure, mapOpenRouterError, parseOpenRouterJson, requestOpenRouter } from './openrouter-client.js';
 
-const DEFAULT_MODEL = 'gemini-3.5-flash-lite';
-const REQUEST_TIMEOUT_MS = 45_000;
-const MAX_OUTPUT_TOKENS = 5_000;
+const REQUEST_TIMEOUT_MS = 120_000;
+const MAX_OUTPUT_TOKENS = 6_000;
 const CATEGORIES = ['SEO', 'Technical SEO', 'Performance', 'Content', 'Accessibility'];
 const PRIORITIES = ['Critical', 'High', 'Medium', 'Low'];
 const CATEGORY_LIMITS = {
@@ -67,7 +66,7 @@ function record(value) {
 }
 
 function invalidResponse(message) {
-  return new AppError(`Gemini returned an invalid analysis: ${message}`, 502, 'GEMINI_INVALID_RESPONSE');
+  return new AppError(`OpenRouter returned an invalid analysis: ${message}`, 502, 'OPENROUTER_INVALID_RESPONSE');
 }
 
 function requireObject(value, path, allowedKeys) {
@@ -111,9 +110,13 @@ function validateRecommendation(value, path) {
   };
 }
 
-function parseAnalysis(text) {
+function parseAnalysis(input) {
   let value;
-  try { value = JSON.parse(text); } catch { throw invalidResponse('the response was not valid JSON.'); }
+  if (typeof input === 'string') {
+    try { value = JSON.parse(input); } catch { throw invalidResponse('the response was not valid JSON.'); }
+  } else {
+    value = input;
+  }
   const rootKeys = [
     'websiteSummary', 'overallAssessment', 'topProblems', 'seoRecommendations',
     'technicalSeoRecommendations', 'performanceRecommendations', 'contentRecommendations',
@@ -262,32 +265,8 @@ function verifyEvidence(analysis, sources) {
   return analysis;
 }
 
-function friendlyApiError(error) {
-  const status = Number(error?.status ?? error?.statusCode);
-  const code = String(error?.code ?? '').toUpperCase();
-  const name = String(error?.name ?? '');
-  const message = String(error?.message ?? '').toUpperCase();
-  if (status === 429 || /RESOURCE_EXHAUSTED|QUOTA|RATE.?LIMIT/.test(`${code} ${message}`)) {
-    return new AppError('Gemini usage quota or rate limit was reached. Wait and try again, or check the Google AI Studio quota for this API key.', 429, 'GEMINI_RATE_LIMIT');
-  }
-  if (status === 401 || status === 403) return new AppError('Gemini rejected this API key or model access. Check GEMINI_API_KEY and GEMINI_MODEL.', 502, 'GEMINI_ACCESS_DENIED');
-  if (status === 400) return new AppError('Gemini rejected the analysis request. Check that GEMINI_MODEL supports structured JSON output.', 502, 'GEMINI_BAD_REQUEST');
-  if (name === 'TimeoutError' || name === 'AbortError' || /timeout|timed out/i.test(error?.message ?? '')) {
-    return new AppError('Gemini analysis timed out. The website scan can still be saved without AI recommendations.', 504, 'GEMINI_TIMEOUT');
-  }
-  if (status >= 500) return new AppError('Google Gemini is temporarily unavailable. Try the scan again shortly.', 502, 'GEMINI_UNAVAILABLE');
-  return new AppError('Gemini could not generate recommendations. Check the API key, model, network, and quota.', 502, 'GEMINI_UNAVAILABLE');
-}
-
-async function createClient(apiKey, createClientOverride) {
-  if (createClientOverride) return createClientOverride(apiKey);
-  const { GoogleGenAI } = await import('@google/genai');
-  return new GoogleGenAI({ apiKey });
-}
-
-export async function generateGeminiAnalysis({ findings = [], pageFacts = {}, pageSpeed = null }, dependencies = {}) {
-  const apiKey = process.env.GEMINI_API_KEY?.trim();
-  if (!apiKey) return { analysis: null, warnings: ['Gemini recommendations are unavailable until GEMINI_API_KEY is configured.'] };
+export async function generateOpenRouterAnalysis({ findings = [], pageFacts = {}, pageSpeed = null }, dependencies = {}) {
+  if (!process.env.OPENROUTER_API_KEY?.trim()) return { analysis: null, warnings: ['AI recommendations are unavailable until OPENROUTER_API_KEY is configured.'] };
 
   const sources = buildEvidence(findings, pageSpeed);
   const measured = {
@@ -296,37 +275,23 @@ export async function generateGeminiAnalysis({ findings = [], pageFacts = {}, pa
     pageSpeed: compactPageSpeed(pageSpeed),
     evidence: sources,
   };
-  const model = process.env.GEMINI_MODEL?.trim() || DEFAULT_MODEL;
   try {
-    const ai = await createClient(apiKey, dependencies.createClient);
-    const response = await ai.models.generateContent({
-      model,
-      contents: JSON.stringify(measured),
-      config: {
-        systemInstruction,
-        responseMimeType: 'application/json',
-        responseSchema,
-        ...geminiLatencyConfig(model),
-        maxOutputTokens: MAX_OUTPUT_TOKENS,
-        abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        httpOptions: {
-          timeout: REQUEST_TIMEOUT_MS - 5_000,
-          retryOptions: {
-            attempts: 2,
-            initialDelay: 0.3,
-            maxDelay: 1,
-            httpStatusCodes: [408, 500, 502, 503, 504],
-          },
-        },
-      },
-    });
-    const text = response?.text;
-    if (typeof text !== 'string' || !text.trim()) throw invalidResponse('the response was empty.');
-    const analysis = verifyEvidence(parseAnalysis(text), sources);
-    return { analysis, warnings: [], model };
+    const response = await (dependencies.requestOpenRouter ?? requestOpenRouter)({
+      messages: [
+        { role: 'system', content: systemInstruction },
+        { role: 'user', content: JSON.stringify(measured) },
+      ],
+      schemaName: 'site_audit_recommendations',
+      schema: responseSchema,
+      maxTokens: MAX_OUTPUT_TOKENS,
+      timeoutMs: REQUEST_TIMEOUT_MS,
+    }, dependencies);
+    if (response.finishReason === 'length') throw invalidResponse('the response was cut off before it finished.');
+    const analysis = verifyEvidence(parseAnalysis(parseOpenRouterJson(response.text, 'analysis')), sources);
+    return { analysis, warnings: [], model: response.model };
   } catch (error) {
     if (error instanceof AppError) throw error;
-    logGeminiRequestFailure('site-recommendations', error);
-    throw friendlyApiError(error);
+    logOpenRouterFailure('site-recommendations', error);
+    throw mapOpenRouterError(error, 'SiteSense recommendations');
   }
 }

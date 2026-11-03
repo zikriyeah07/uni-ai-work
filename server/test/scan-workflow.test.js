@@ -30,7 +30,7 @@ test('runs the complete workflow, reports progress, and persists measured findin
   const dependencies = {
     auditWebsite: async (url, options) => { assert.equal(url, 'https://public.example/'); options.onProgress({ stage: 'html', status: 'complete', message: 'HTML ready.' }); return audit; },
     runPageSpeed: async (_url, device) => { assert.equal(device, 'desktop'); return pageSpeed; },
-    generateGeminiAnalysis: async () => ({ analysis, warnings: [] }),
+    generateOpenRouterAnalysis: async () => ({ analysis, warnings: [] }),
     getPrisma: () => ({ scan: { create: async ({ data }) => { createData = data; return { id: 'scan_123', scannedAt: new Date('2026-11-03T00:00:00.000Z') }; } } }),
   };
   const result = await executeScan({ url: 'https://public.example/', device: 'desktop', onProgress: (event) => progress.push(event) }, dependencies);
@@ -41,7 +41,7 @@ test('runs the complete workflow, reports progress, and persists measured findin
   assert.equal(result.performanceScore, 88);
   assert.deepEqual(result.coreWebVitals, pageSpeed.coreWebVitals);
   assert.equal(createData.issues.create[0].key, 'missing-title');
-  assert.equal(createData.geminiAnalysis.websiteSummary, analysis.websiteSummary);
+  assert.equal(createData.aiAnalysis.websiteSummary, analysis.websiteSummary);
   assert.equal(createData.recommendations.create.length, 1);
   assert.equal(createData.recommendations.create[0].whyItMatters, recommendation.whyItMatters);
   assert.deepEqual(createData.recommendations.create[0].evidenceRefs, ['audit:missing-title']);
@@ -56,7 +56,7 @@ test('returns the real HTML findings when optional services and persistence fail
   const dependencies = {
     auditWebsite: async () => audit,
     runPageSpeed: async () => { throw new Error('PageSpeed quota was reached.'); },
-    generateGeminiAnalysis: async () => { throw new Error('Gemini unavailable.'); },
+    generateOpenRouterAnalysis: async () => { throw new Error('OpenRouter unavailable.'); },
     getPrisma: () => ({ scan: { create: async () => { throw new Error('database unavailable'); } } }),
   };
   const result = await executeScan({ url: 'https://public.example/', device: 'mobile', onProgress: (event) => progress.push(event) }, dependencies);
@@ -64,12 +64,12 @@ test('returns the real HTML findings when optional services and persistence fail
   assert.equal(result.persisted, false);
   assert.equal(result.performanceScore, null);
   assert.equal(result.technicalFindings.findings[0].key, 'missing-title');
-  assert.equal(result.geminiAnalysis, null);
+  assert.equal(result.aiAnalysis, null);
   assert.ok(result.serviceWarnings.some((warning) => warning.includes('PageSpeed quota')));
-  assert.ok(result.serviceWarnings.some((warning) => warning.includes('Gemini recommendations failed: Gemini unavailable')));
+  assert.ok(result.serviceWarnings.some((warning) => warning.includes('OpenRouter recommendations failed: OpenRouter unavailable')));
   assert.ok(result.serviceWarnings.some((warning) => warning.includes('could not be saved')));
   assert.ok(progress.some(({ stage, status }) => stage === 'pagespeed' && status === 'unavailable'));
-  assert.ok(progress.some(({ stage, status }) => stage === 'gemini' && status === 'unavailable'));
+  assert.ok(progress.some(({ stage, status }) => stage === 'openrouter' && status === 'unavailable'));
   assert.ok(progress.some(({ stage, status }) => stage === 'persistence' && status === 'unavailable'));
 });
 
@@ -77,7 +77,7 @@ test('fails a scan when the required HTML audit cannot run', async () => {
   await assert.rejects(executeScan({ url: 'http://127.0.0.1/', device: 'mobile' }, {
     auditWebsite: async () => { throw Object.assign(new Error('Private hosts are blocked.'), { code: 'UNSAFE_HOST' }); },
     runPageSpeed: async () => pageSpeed,
-    generateGeminiAnalysis: async () => ({ analysis, warnings: [] }),
+    generateOpenRouterAnalysis: async () => ({ analysis, warnings: [] }),
     getPrisma: () => null,
   }), { code: 'UNSAFE_HOST' });
 });
@@ -86,7 +86,7 @@ test('does not calculate a combined score when a PageSpeed category is missing',
   const result = await executeScan({ url: 'https://public.example/', device: 'mobile' }, {
     auditWebsite: async () => audit,
     runPageSpeed: async () => ({ performanceScore: 88, accessibilityScore: null, bestPracticesScore: 91, seoScore: 83 }),
-    generateGeminiAnalysis: async () => ({ analysis, warnings: [] }),
+    generateOpenRouterAnalysis: async () => ({ analysis, warnings: [] }),
     getPrisma: () => null,
   });
   assert.equal(result.performanceScore, 88);

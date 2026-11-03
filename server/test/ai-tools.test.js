@@ -3,13 +3,13 @@ import assert from 'node:assert/strict';
 import { analyzeCv, validateCvAnalysis, validateCvRequest } from '../src/services/cv-analysis.service.js';
 import { generateRoadmap, validateRoadmap, validateRoadmapRequest } from '../src/services/roadmap.service.js';
 
-const originalKey = process.env.GEMINI_API_KEY;
-const originalModel = process.env.GEMINI_MODEL;
+const originalKey = process.env.OPENROUTER_API_KEY;
+const originalModel = process.env.OPENROUTER_MODEL;
 function restoreEnv() {
-  if (originalKey === undefined) delete process.env.GEMINI_API_KEY;
-  else process.env.GEMINI_API_KEY = originalKey;
-  if (originalModel === undefined) delete process.env.GEMINI_MODEL;
-  else process.env.GEMINI_MODEL = originalModel;
+  if (originalKey === undefined) delete process.env.OPENROUTER_API_KEY;
+  else process.env.OPENROUTER_API_KEY = originalKey;
+  if (originalModel === undefined) delete process.env.OPENROUTER_MODEL;
+  else process.env.OPENROUTER_MODEL = originalModel;
 }
 
 function cvResult(overrides = {}) {
@@ -27,8 +27,11 @@ function cvResult(overrides = {}) {
   };
 }
 
-function fakeClient(output, inspect = () => {}) {
-  return { models: { generateContent: async (request) => { inspect(request); return { text: JSON.stringify(output) }; } } };
+function fakeOpenRouter(output, inspect = () => {}) {
+  return async (request) => {
+    inspect(request);
+    return { text: JSON.stringify(output), model: 'openrouter/free', annotations: [], finishReason: 'stop' };
+  };
 }
 
 test('validates uploaded CV content and rejects invalid types and malformed base64', () => {
@@ -39,48 +42,46 @@ test('validates uploaded CV content and rejects invalid types and malformed base
   assert.throws(() => validateCvRequest({ fileName: 'cv.docx', mimeType: 'application/pdf', base64: pdf }), { code: 'INVALID_CV_FILE' });
 });
 
-test('analyzes a PDF using Gemini structured output and validates the returned assessment', async (t) => {
-  process.env.GEMINI_API_KEY = 'test-key';
-  process.env.GEMINI_MODEL = 'gemini-test-model';
+test('analyzes a PDF through OpenRouter and validates the returned assessment', async (t) => {
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  process.env.OPENROUTER_MODEL = 'openrouter/free';
   t.after(restoreEnv);
   let request;
   const pdfBase64 = Buffer.from('%PDF-1.7\nresume').toString('base64');
   const result = await analyzeCv({ fileName: 'resume.pdf', mimeType: 'application/pdf', base64: pdfBase64, targetRole: 'Frontend developer' }, {
-    createClient: async (apiKey) => {
-      assert.equal(apiKey, 'test-key');
-      return fakeClient(cvResult(), (payload) => { request = payload; });
-    },
+    requestOpenRouter: fakeOpenRouter(cvResult(), (payload) => { request = payload; }),
   });
-  assert.equal(result.model, 'gemini-test-model');
+  assert.equal(result.model, 'openrouter/free');
   assert.equal(result.analysis.score, 76);
   assert.equal(result.analysis.improvements[0].priority, 'High');
-  assert.equal(request.config.responseMimeType, 'application/json');
-  assert.equal(request.config.maxOutputTokens, 2200);
-  assert.equal(request.contents[0].parts[0].inlineData.mimeType, 'application/pdf');
-  assert.match(request.contents[0].parts[1].text, /Frontend developer/);
+  assert.equal(request.schemaName, 'cv_review');
+  assert.equal(request.maxTokens, 3200);
+  assert.equal(request.plugins[0].pdf.engine, 'cloudflare-ai');
+  assert.equal(request.messages[0].content[1].type, 'file');
+  assert.match(request.messages[0].content[0].text, /Frontend developer/);
 });
 
 test('checks text CV evidence against the actual uploaded content', async (t) => {
-  process.env.GEMINI_API_KEY = 'test-key';
+  process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
   const text = 'Built a REST API for coursework and documented endpoints for a student project.';
   const base64 = Buffer.from(text).toString('base64');
   const output = cvResult();
-  const result = await analyzeCv({ fileName: 'resume.txt', mimeType: 'text/plain', base64 }, { createClient: async () => fakeClient(output) });
+  const result = await analyzeCv({ fileName: 'resume.txt', mimeType: 'text/plain', base64 }, { requestOpenRouter: fakeOpenRouter(output) });
   assert.equal(result.analysis.improvements[0].evidence, 'Built a REST API');
   await assert.rejects(analyzeCv({ fileName: 'resume.txt', mimeType: 'text/plain', base64 }, {
-    createClient: async () => fakeClient(cvResult({ improvements: [{ ...output.improvements[0], evidence: 'Managed a team of 20 people' }] })),
+    requestOpenRouter: fakeOpenRouter(cvResult({ improvements: [{ ...output.improvements[0], evidence: 'Managed a team of 20 people' }] })),
   }), { code: 'CV_INVALID_RESPONSE', message: /does not appear/ });
 });
 
-test('rejects invalid CV score and maps Gemini quota and timeout failures', async (t) => {
-  process.env.GEMINI_API_KEY = 'test-key';
+test('rejects invalid CV score and maps OpenRouter limit and timeout failures', async (t) => {
+  process.env.OPENROUTER_API_KEY = 'test-key';
   t.after(restoreEnv);
   assert.throws(() => validateCvAnalysis(cvResult({ score: 101 })), { code: 'CV_INVALID_RESPONSE' });
   const pdf = Buffer.from('%PDF-1.7\nresume').toString('base64');
   const input = { fileName: 'resume.pdf', mimeType: 'application/pdf', base64: pdf };
-  await assert.rejects(analyzeCv(input, { createClient: async () => ({ models: { generateContent: async () => { throw Object.assign(new Error('RESOURCE_EXHAUSTED'), { status: 429 }); } } }) }), { code: 'GEMINI_RATE_LIMIT' });
-  await assert.rejects(analyzeCv(input, { createClient: async () => ({ models: { generateContent: async () => { throw Object.assign(new Error('request timed out'), { name: 'TimeoutError' }); } } }) }), { code: 'GEMINI_TIMEOUT' });
+  await assert.rejects(analyzeCv(input, { requestOpenRouter: async () => { throw Object.assign(new Error('rate limit'), { status: 429 }); } }), { code: 'OPENROUTER_RATE_LIMIT' });
+  await assert.rejects(analyzeCv(input, { requestOpenRouter: async () => { throw Object.assign(new Error('request timed out'), { name: 'TimeoutError' }); } }), { code: 'OPENROUTER_TIMEOUT' });
 });
 
 const roadmapOutput = {
@@ -101,23 +102,20 @@ test('validates roadmap input and enforces bounded ordered milestones', () => {
   assert.throws(() => validateRoadmap({ ...roadmapOutput, milestones: [roadmapOutput.milestones[1], roadmapOutput.milestones[0]] }, 6), { code: 'ROADMAP_INVALID_RESPONSE', message: /ascending/ });
 });
 
-test('generates a roadmap through the configured Gemini model and handles quota errors', async (t) => {
-  process.env.GEMINI_API_KEY = 'test-key';
-  process.env.GEMINI_MODEL = 'gemini-test-model';
+test('generates a roadmap through the configured OpenRouter model and handles free-model limits', async (t) => {
+  process.env.OPENROUTER_API_KEY = 'test-key';
+  process.env.OPENROUTER_MODEL = 'openrouter/free';
   t.after(restoreEnv);
   let request;
   const result = await generateRoadmap({ goal: 'Prepare for a junior frontend role', durationMonths: 6, hoursPerWeek: 5 }, {
-    createClient: async (apiKey) => {
-      assert.equal(apiKey, 'test-key');
-      return fakeClient(roadmapOutput, (payload) => { request = payload; });
-    },
+    requestOpenRouter: fakeOpenRouter(roadmapOutput, (payload) => { request = payload; }),
   });
-  assert.equal(result.model, 'gemini-test-model');
+  assert.equal(result.model, 'openrouter/free');
   assert.equal(result.roadmap.milestones[1].month, 3);
-  assert.equal(request.config.responseMimeType, 'application/json');
-  assert.equal(request.config.maxOutputTokens, 3600);
-  assert.match(request.contents, /availableHoursPerWeek/);
+  assert.equal(request.schemaName, 'learning_roadmap');
+  assert.equal(request.maxTokens, 4500);
+  assert.match(request.messages[0].content, /availableHoursPerWeek/);
   await assert.rejects(generateRoadmap({ goal: 'Learn front-end development', durationMonths: 6, hoursPerWeek: 5 }, {
-    createClient: async () => ({ models: { generateContent: async () => { throw Object.assign(new Error('RESOURCE_EXHAUSTED'), { status: 429 }); } } }),
-  }), { code: 'GEMINI_RATE_LIMIT' });
+    requestOpenRouter: async () => { throw Object.assign(new Error('rate limit'), { status: 429 }); },
+  }), { code: 'OPENROUTER_RATE_LIMIT' });
 });

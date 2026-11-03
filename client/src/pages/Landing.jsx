@@ -48,7 +48,7 @@ export default function Landing() {
         <div className="feature-grid">
           <article className="feature-card"><span className="feature-icon"><Gauge size={19} /></span><div className="feature-index">01</div><h3>Real performance data</h3><p>PageSpeed Insights measures performance, accessibility, best practices, SEO, and Core Web Vitals for mobile or desktop.</p></article>
           <article className="feature-card"><span className="feature-icon"><SearchCheck size={19} /></span><div className="feature-index">02</div><h3>Technical SEO checks</h3><p>Review page metadata, heading structure, image alt text, internal links, crawl files, and social sharing tags.</p></article>
-          <article className="feature-card"><span className="feature-icon"><Sparkles size={19} /></span><div className="feature-index">03</div><h3>Recommendations with context</h3><p>Gemini explains confirmed findings, why they matter, and the next actions worth taking first.</p></article>
+          <article className="feature-card"><span className="feature-icon"><Sparkles size={19} /></span><div className="feature-index">03</div><h3>Recommendations with context</h3><p>AI recommendations explain confirmed findings, why they matter, and the next actions worth taking first.</p></article>
         </div>
       </section>
       <section id="how-it-works" className="how-section section-pad">

@@ -116,7 +116,7 @@ export default function CvChecker() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ fileName: file.name, mimeType, base64, targetRole: targetRole.trim() }),
-        signal: AbortSignal.timeout(85000),
+        signal: AbortSignal.timeout(125000),
       });
       if (!response.ok) throw new Error(await parseApiError(response));
       const result = await response.json();
@@ -173,8 +173,8 @@ export default function CvChecker() {
             <button className="button button-primary cv-submit" type="submit" disabled={!file || busy}>
               {busy ? <><span className="cv-spinner" /> Analyzing your CV…</> : <><Sparkles size={16} /> Analyze CV</>}
             </button>
-            {busy && <p className="cv-progress-note" role="status">Gemini is reviewing the document and preparing evidence-based suggestions.</p>}
-            <div className="cv-privacy"><ShieldCheck size={15} /><span>Document content is sent to Gemini and is not saved by this app.</span></div>
+            {busy && <p className="cv-progress-note" role="status">A free OpenRouter model is reviewing the document and preparing evidence-based suggestions.</p>}
+            <div className="cv-privacy"><ShieldCheck size={15} /><span>Document content is sent to OpenRouter for review and is not saved by this app.</span></div>
           </form>
           <aside className="cv-side-panel">
             <div className="cv-side-mark">01</div>

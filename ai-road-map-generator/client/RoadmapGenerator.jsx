@@ -109,7 +109,7 @@ export default function RoadmapGenerator() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
         body: JSON.stringify({ ...form, durationMonths: Number(form.durationMonths), hoursPerWeek: Number(form.hoursPerWeek) }),
-        signal: AbortSignal.timeout(55_000),
+        signal: AbortSignal.timeout(95_000),
       });
       if (!response.ok) throw new Error(await errorMessage(response));
       const result = await response.json();
@@ -135,7 +135,7 @@ export default function RoadmapGenerator() {
       {notice && <div className={`roadmap-notice ${noticeIsError ? 'roadmap-notice-error' : ''}`} role={noticeIsError ? 'alert' : 'status'}>{noticeIsError ? <CircleAlert size={15} /> : <Check size={15} />}{notice}</div>}
       {roadmap ? <RoadmapResult roadmap={roadmap} duration={form.durationMonths} onReset={reset} onNotice={(message, isError = false) => { setNotice(message); setNoticeIsError(isError); }} /> : <div className="roadmap-workspace">
         <form className="roadmap-form-card" onSubmit={generate}>
-          <div className="roadmap-form-title"><span><Route size={19} /></span><div><h2>Set your destination</h2><p>Clear context helps Gemini make a more practical plan.</p></div></div>
+          <div className="roadmap-form-title"><span><Route size={19} /></span><div><h2>Set your destination</h2><p>Clear context helps the AI make a more practical plan.</p></div></div>
           <label className="tool-label" htmlFor="roadmap-goal">What do you want to achieve?<span className="tool-required">Required</span></label>
           <textarea id="roadmap-goal" className="tool-input tool-textarea" value={form.goal} onChange={(event) => update('goal', event.target.value)} minLength={3} maxLength={500} required disabled={busy} placeholder="e.g. Become ready to apply for junior front-end developer roles" />
           <div className="roadmap-fields-row">
@@ -150,7 +150,7 @@ export default function RoadmapGenerator() {
           <textarea id="roadmap-constraints" className="tool-input tool-textarea tool-textarea-small" value={form.constraints} onChange={(event) => update('constraints', event.target.value)} maxLength={1200} disabled={busy} placeholder="Exams, work schedule, budget, access, or other limits" />
           {error && <div className="cv-error" role="alert"><CircleAlert size={16} />{error}</div>}
           <button className="button button-primary roadmap-submit" type="submit" disabled={busy || form.goal.trim().length < 3}>{busy ? <><span className="cv-spinner" /> Building your roadmap…</> : <><Sparkles size={16} /> Generate roadmap <ArrowRight size={15} /></>}</button>
-          {busy && <p className="cv-progress-note" role="status">Gemini is organizing your goal into milestones, tasks, and deliverables.</p>}
+          {busy && <p className="cv-progress-note" role="status">A free OpenRouter model is organizing your goal into milestones, tasks, and deliverables.</p>}
           <div className="cv-privacy"><ShieldCheckIcon /><span>Your context is used for this request and is not saved by this app.</span></div>
         </form>
         <aside className="roadmap-side-panel"><div className="cv-side-mark">02</div><h2>A plan with<br />room to adapt.</h2><p>Each phase turns your stated goal into manageable work. The plan respects the available time and calls out deliverables you can use to check progress.</p><div className="roadmap-side-facts"><span><b>01</b> Clear milestone sequence</span><span><b>02</b> Tasks sized to your time</span><span><b>03</b> Tangible phase outcomes</span></div></aside>

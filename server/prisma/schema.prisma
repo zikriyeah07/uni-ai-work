@@ -22,7 +22,7 @@ model Scan {
   coreWebVitals        Json?
   technicalFindings    Json?
   pageSpeedData        Json?
-  geminiAnalysis       Json?
+  aiAnalysis           Json?              @map("geminiAnalysis")
   serviceWarnings      Json?
   issues               AuditIssue[]
   recommendations      AIRecommendation[]
