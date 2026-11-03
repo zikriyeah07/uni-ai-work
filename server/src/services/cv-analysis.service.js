@@ -1,5 +1,6 @@
 import { CV_RESPONSE_SCHEMA, buildCvPrompt } from '../../../ai-cv-cheker/server/cv-prompt.js';
 import { AppError } from '../utils/errors.js';
+import { geminiLatencyConfig, logGeminiRequestFailure } from './gemini-config.js';
 
 const MAX_FILE_BYTES = 2.8 * 1024 * 1024;
 const MAX_OUTPUT_TOKENS = 2200;
@@ -92,7 +93,7 @@ export async function analyzeCv(body, dependencies = {}) {
       config: {
         responseMimeType: 'application/json',
         responseSchema: CV_RESPONSE_SCHEMA,
-        temperature: 0.15,
+        ...geminiLatencyConfig(model),
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         httpOptions: { timeout: REQUEST_TIMEOUT_MS - 5000, retryOptions: { attempts: 1 } },
@@ -104,6 +105,7 @@ export async function analyzeCv(body, dependencies = {}) {
     return { analysis: validateCvAnalysis(parsed, request.text), model };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    logGeminiRequestFailure('cv', error);
     throw friendlyApiError(error);
   }
 }

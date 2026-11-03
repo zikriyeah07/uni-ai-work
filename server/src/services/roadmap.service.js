@@ -1,5 +1,6 @@
 import { ROADMAP_RESPONSE_SCHEMA, buildRoadmapPrompt } from '../../../ai-road-map-generator/server/roadmap-prompt.js';
 import { AppError } from '../utils/errors.js';
+import { geminiLatencyConfig, logGeminiRequestFailure } from './gemini-config.js';
 
 const MAX_OUTPUT_TOKENS = 3600;
 const REQUEST_TIMEOUT_MS = 45_000;
@@ -80,7 +81,7 @@ export async function generateRoadmap(body, dependencies = {}) {
       config: {
         responseMimeType: 'application/json',
         responseSchema: ROADMAP_RESPONSE_SCHEMA,
-        temperature: 0.25,
+        ...geminiLatencyConfig(model),
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         httpOptions: { timeout: REQUEST_TIMEOUT_MS - 5000, retryOptions: { attempts: 1 } },
@@ -92,6 +93,7 @@ export async function generateRoadmap(body, dependencies = {}) {
     return { roadmap: validateRoadmap(parsed, input.durationMonths), model };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    logGeminiRequestFailure('roadmap', error);
     throw friendlyApiError(error);
   }
 }

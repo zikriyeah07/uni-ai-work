@@ -1,4 +1,5 @@
 import { AppError } from '../utils/errors.js';
+import { geminiLatencyConfig, logGeminiRequestFailure } from './gemini-config.js';
 
 const DEFAULT_MODEL = 'gemini-3.8-flash';
 const REQUEST_TIMEOUT_MS = 45_000;
@@ -305,7 +306,7 @@ export async function generateGeminiAnalysis({ findings = [], pageFacts = {}, pa
         systemInstruction,
         responseMimeType: 'application/json',
         responseSchema,
-        temperature: 0.1,
+        ...geminiLatencyConfig(model),
         maxOutputTokens: MAX_OUTPUT_TOKENS,
         abortSignal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
         httpOptions: {
@@ -325,6 +326,7 @@ export async function generateGeminiAnalysis({ findings = [], pageFacts = {}, pa
     return { analysis, warnings: [], model };
   } catch (error) {
     if (error instanceof AppError) throw error;
+    logGeminiRequestFailure('site-recommendations', error);
     throw friendlyApiError(error);
   }
 }

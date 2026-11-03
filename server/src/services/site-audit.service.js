@@ -21,9 +21,9 @@ async function mapWithConcurrency(items, limit, callback) {
 
 async function checkResource(url, { method = 'HEAD', maxBytes = 16_000 } = {}, fetcher = safeFetch) {
   try {
-    let response = await fetcher(url, { timeoutMs: 4000, maxBytes, maxRedirects: 3, method });
+    let response = await fetcher(url, { timeoutMs: method === 'HEAD' ? 2500 : 3500, maxBytes, maxRedirects: 3, method });
     if (method === 'HEAD' && [403, 405, 501].includes(response.status)) {
-      response = await fetcher(url, { timeoutMs: 5000, maxBytes: 512_000, maxRedirects: 3, method: 'GET' });
+      response = await fetcher(url, { timeoutMs: 3500, maxBytes: 512_000, maxRedirects: 3, method: 'GET' });
     }
     return {
       available: response.status >= 200 && response.status < 400,
@@ -32,17 +32,6 @@ async function checkResource(url, { method = 'HEAD', maxBytes = 16_000 } = {}, f
       contentType: String(response.headers?.['content-type'] ?? '').toLowerCase(),
     };
   } catch {
-    if (method === 'HEAD') {
-      try {
-        const response = await fetcher(url, { timeoutMs: 5000, maxBytes: 512_000, maxRedirects: 3, method: 'GET' });
-        return {
-          available: response.status >= 200 && response.status < 400,
-          status: response.status,
-          body: response.body,
-          contentType: String(response.headers?.['content-type'] ?? '').toLowerCase(),
-        };
-      } catch { /* The resource could not be reached with either method. */ }
-    }
     return { available: false, status: null, body: '', contentType: '' };
   }
 }
@@ -64,7 +53,7 @@ function cleanPageReference(value, baseUrl) {
   } catch { return String(value).slice(0, 1000); }
 }
 
-export async function auditWebsite(rawUrl, { onProgress = () => {}, fetcher = safeFetch } = {}) {
+export async function auditWebsite(rawUrl, { onProgress = () => {}, onPageResolved = () => {}, fetcher = safeFetch } = {}) {
   const requestedUrl = normalizeUrl(rawUrl);
   onProgress({ stage: 'html', status: 'running', message: 'Validating the public URL and fetching page HTML.' });
   const page = await fetcher(requestedUrl, { timeoutMs: 12000, maxBytes: 2_000_000, maxRedirects: 5 });
@@ -74,6 +63,7 @@ export async function auditWebsite(rawUrl, { onProgress = () => {}, fetcher = sa
     throw new AppError('The URL did not return an HTML page that can be audited.', 422, 'NOT_HTML');
   }
   const finalUrl = new URL(page.url);
+  onPageResolved(finalUrl.toString());
   const $ = cheerio.load(page.body);
   const findings = [];
   const title = $('title').first().text().trim();
@@ -158,7 +148,7 @@ export async function auditWebsite(rawUrl, { onProgress = () => {}, fetcher = sa
   });
   const linksChecked = [...internalHrefs].slice(0, 24);
   onProgress({ stage: 'links', status: 'running', message: `Checking ${linksChecked.length} internal links with bounded concurrency.` });
-  const linkResults = await mapWithConcurrency(linksChecked, 5, async (url) => ({ url, ...(await checkResource(url, {}, fetcher)) }));
+  const linkResults = await mapWithConcurrency(linksChecked, 8, async (url) => ({ url, ...(await checkResource(url, {}, fetcher)) }));
   onProgress({ stage: 'links', status: 'complete', message: `${linksChecked.length} internal links have been checked.` });
   const brokenLinks = linkResults.filter((item) => !item.available || item.status >= 400);
   if (brokenLinks.length) {

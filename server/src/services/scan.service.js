@@ -17,13 +17,23 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
   const generateGeminiAnalysis = dependencies.generateGeminiAnalysis ?? (await import('./gemini.service.js')).generateGeminiAnalysis;
   const getPrisma = dependencies.getPrisma ?? (await import('../db/prisma.js')).getPrisma;
   onProgress({ stage: 'html', status: 'running', message: 'Validating the public URL and starting the HTML audit.' });
-  const audit = await auditWebsite(url, { onProgress });
   const warnings = [];
-
-  onProgress({ stage: 'pagespeed', status: 'running', message: `Requesting Google PageSpeed Insights for ${device}.` });
   let pageSpeed = null;
+  let pageSpeedTask;
+  const startPageSpeed = (targetUrl) => {
+    if (pageSpeedTask) return;
+    onProgress({ stage: 'pagespeed', status: 'running', message: `Requesting Google PageSpeed Insights for ${device}.` });
+    pageSpeedTask = Promise.resolve().then(() => runPageSpeed(targetUrl, device)).then(
+      (result) => ({ result }),
+      (error) => ({ error }),
+    );
+  };
+  const audit = await auditWebsite(url, { onProgress, onPageResolved: startPageSpeed });
+  if (!pageSpeedTask) startPageSpeed(audit.finalUrl);
+  const pageSpeedOutcome = await pageSpeedTask;
   try {
-    pageSpeed = await runPageSpeed(audit.finalUrl, device);
+    if (pageSpeedOutcome.error) throw pageSpeedOutcome.error;
+    pageSpeed = pageSpeedOutcome.result;
     onProgress({ stage: 'pagespeed', status: 'complete', message: 'PageSpeed scores and available web vitals were received.' });
   } catch (error) {
     const message = error.message || 'Google PageSpeed analysis failed.';
@@ -119,8 +129,10 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
       const result = { ...scan, id: saved.id, scannedAt: saved.scannedAt.toISOString(), persisted: true };
       onProgress({ stage: 'complete', status: result.status, message: 'The website scan is complete.' });
       return result;
-    } catch {
-      const message = 'This report could not be saved to PostgreSQL. Check DATABASE_URL and database availability.';
+    } catch (error) {
+      const code = typeof error?.code === 'string' && /^P\d{4}$/.test(error.code) ? error.code : null;
+      console.error('[scan] PostgreSQL persistence failed', { name: error?.name ?? 'Error', code });
+      const message = `This report could not be saved to PostgreSQL${code ? ` (${code})` : ''}. Check database connectivity and schema.`;
       const result = {
         ...scan,
         status: 'partial',

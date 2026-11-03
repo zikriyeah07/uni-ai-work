@@ -76,8 +76,8 @@ export function createApp({ expressFactory = express, spaIndexPath = null } = {}
     const statusCode = error instanceof AppError ? error.statusCode : parserError ? 400 : oversizedBody ? 413 : 500;
     const code = error instanceof AppError ? error.code : parserError ? 'INVALID_JSON' : oversizedBody ? 'REQUEST_TOO_LARGE' : 'INTERNAL_ERROR';
     const message = oversizedBody ? req.originalUrl?.startsWith('/api/cv/analyze') ? 'CV upload is too large. PDF files must be 2.8 MB or smaller.' : 'Request body exceeds the allowed size.'
-      : statusCode >= 500 ? 'The server encountered an unexpected error.'
-        : parserError ? 'Request body must be valid JSON.' : error.message;
+      : parserError ? 'Request body must be valid JSON.'
+        : error instanceof AppError ? error.message : 'The server encountered an unexpected error.';
     if (statusCode >= 500) console.error('[api]', error);
     res.status(statusCode).json({ error: { code, message } });
   });
