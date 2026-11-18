@@ -1,9 +1,13 @@
+import { createRequire } from 'node:module';
 import { CV_RESPONSE_SCHEMA, buildCvPrompt } from '../../../ai-cv-cheker/server/cv-prompt.js';
 import { AppError } from '../utils/errors.js';
 import { logOpenRouterFailure, mapOpenRouterError, requestOpenRouter } from './openrouter-client.js';
 import { logGeminiFailure, mapGeminiError, requestGemini } from './gemini-client.js';
 import { logOpenCodeFailure, mapOpenCodeError, requestOpenCode } from './opencode-client.js';
 import { parseAiJson, responseWasTruncated, runAiWithFallback } from './ai-provider-fallback.js';
+
+const require = createRequire(import.meta.url);
+const pdfParse = require('pdf-parse');
 
 const MAX_FILE_BYTES = 2.8 * 1024 * 1024;
 const MAX_OUTPUT_TOKENS = 3200;
@@ -39,6 +43,16 @@ export function validateCvRequest(body = {}) {
   return { fileName: fileName.trim(), mimeType, base64, bytes, text, targetRole: targetRole.trim() };
 }
 
+async function extractPdfText(bytes) {
+  try {
+    const parsed = await pdfParse(bytes);
+    const text = typeof parsed?.text === 'string' ? parsed.text.replace(/\0/g, '').trim() : '';
+    return text.slice(0, 100_000);
+  } catch {
+    return '';
+  }
+}
+
 export function validateCvAnalysis(value, sourceText = '') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidResponse('the root value must be an object.');
   const score = Number.isInteger(value.score) ? value.score : Number.isFinite(Number(value.score)) ? Math.round(Number(value.score)) : NaN;
@@ -51,16 +65,7 @@ export function validateCvAnalysis(value, sourceText = '') {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalidResponse(`improvements[${index}] had an unexpected shape.`);
     const evidence = typeof item.evidence === 'string' ? item.evidence.trim().slice(0, 260) : '';
     const priority = priorities.has(item.priority) ? item.priority : 'Medium';
-    if (normalizedText && evidence && !normalizedText.includes(evidence.toLowerCase().replace(/\s+/g, ' '))) {
-      // keep improvement but drop unverifiable quote instead of failing the whole review
-      return {
-        title: boundedText(item.title, `improvements[${index}].title`, 140),
-        priority,
-        evidence: '',
-        whyItMatters: boundedText(item.whyItMatters, `improvements[${index}].whyItMatters`, 600, 10),
-        suggestion: boundedText(item.suggestion, `improvements[${index}].suggestion`, 800, 10),
-      };
-    }
+    if (normalizedText && evidence && !normalizedText.includes(evidence.toLowerCase().replace(/\s+/g, ' '))) throw invalidResponse(`improvements[${index}] cited text that does not appear in the uploaded CV.`);
     return {
       title: boundedText(item.title, `improvements[${index}].title`, 140),
       priority,
@@ -82,37 +87,60 @@ export async function analyzeCv(body, dependencies = {}) {
   const request = validateCvRequest(body);
   const prompt = buildCvPrompt({ fileName: request.fileName, targetRole: request.targetRole });
   const pdf = request.mimeType === 'application/pdf';
-  const content = pdf
-    ? [
-      { type: 'text', text: prompt },
-      { type: 'file', file: { filename: request.fileName, file_data: `data:application/pdf;base64,${request.base64}` } },
-    ]
-    : `${prompt}\n\nBEGIN CV DOCUMENT (untrusted content):\n${request.text}\nEND CV DOCUMENT`;
-  const aiRequest = {
-    messages: [{ role: 'user', content }],
-    schemaName: 'cv_review',
-    schema: CV_RESPONSE_SCHEMA,
-    maxTokens: MAX_OUTPUT_TOKENS,
-    timeoutMs: REQUEST_TIMEOUT_MS,
-    ...(pdf ? { plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] } : {}),
-  };
+  const extractedPdfText = pdf ? await extractPdfText(request.bytes) : '';
+  const hasExtractedPdfText = extractedPdfText.length >= 40;
+
+  const pdfFileContent = [
+    { type: 'text', text: prompt },
+    { type: 'file', file: { filename: request.fileName, file_data: `data:application/pdf;base64,${request.base64}` } },
+  ];
+  const textContent = `${prompt}\n\nBEGIN CV DOCUMENT (untrusted content):\n${request.text || extractedPdfText}\nEND CV DOCUMENT`;
 
   const processResponse = (response, provider) => {
     if (responseWasTruncated(response.finishReason)) throw invalidResponse('the response was cut off before it finished.');
     const parsed = parseAiJson(response.text, 'CV review', provider);
-    const extractedPdfText = (response.annotations ?? [])
+    const providerExtracted = (response.annotations ?? [])
       .flatMap((annotation) => annotation?.type === 'file' && Array.isArray(annotation.file?.content) ? annotation.file.content : [])
       .filter((part) => part?.type === 'text' && typeof part.text === 'string')
       .map((part) => part.text)
       .join('\n');
-    return { analysis: validateCvAnalysis(parsed, request.text || extractedPdfText), model: response.model };
+    return { analysis: validateCvAnalysis(parsed, request.text || extractedPdfText || providerExtracted), model: response.model };
   };
 
   const callProvider = async (provider) => {
     try {
-      if (provider === 'opencode' && pdf) {
-        throw new AppError('PDF CVs need OpenRouter or Gemini with this app. Upload a .txt CV, or configure another AI provider for PDF analysis.', 400, 'CV_PDF_PROVIDER_UNSUPPORTED');
+      let aiRequest;
+      if (provider === 'opencode') {
+        const opencodeText = pdf ? extractedPdfText : request.text;
+        if (pdf && !hasExtractedPdfText) {
+          throw new Error('OpenCode could not extract readable text from this PDF. Upload a .txt CV or configure OpenRouter/Gemini for scanned PDFs.');
+        }
+        aiRequest = {
+          messages: [{ role: 'user', content: `${prompt}\n\nBEGIN CV DOCUMENT (untrusted content):\n${opencodeText}\nEND CV DOCUMENT` }],
+          schemaName: 'cv_review',
+          schema: CV_RESPONSE_SCHEMA,
+          maxTokens: MAX_OUTPUT_TOKENS,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+        };
+      } else if (provider === 'gemini') {
+        aiRequest = {
+          messages: [{ role: 'user', content: pdf && !hasExtractedPdfText ? pdfFileContent : textContent }],
+          schemaName: 'cv_review',
+          schema: CV_RESPONSE_SCHEMA,
+          maxTokens: MAX_OUTPUT_TOKENS,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+        };
+      } else {
+        aiRequest = {
+          messages: [{ role: 'user', content: pdf && !hasExtractedPdfText ? pdfFileContent : textContent }],
+          schemaName: 'cv_review',
+          schema: CV_RESPONSE_SCHEMA,
+          maxTokens: MAX_OUTPUT_TOKENS,
+          timeoutMs: REQUEST_TIMEOUT_MS,
+          ...(pdf && !hasExtractedPdfText ? { plugins: [{ id: 'file-parser', pdf: { engine: 'cloudflare-ai' } }] } : {}),
+        };
       }
+
       const response = provider === 'openrouter'
         ? await (dependencies.requestOpenRouter ?? requestOpenRouter)(aiRequest, dependencies)
         : provider === 'opencode'
