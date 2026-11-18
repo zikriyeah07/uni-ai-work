@@ -343,9 +343,11 @@ export async function generateAiAnalysis({ findings = [], pageFacts = {}, pageSp
         : provider === 'opencode'
           ? (dependencies.requestOpenCode ?? requestOpenCode)
           : (dependencies.requestGemini ?? requestGemini);
-      const response = await responseProvider(aiRequest, dependencies);
+      const request = provider === 'opencode' ? { ...aiRequest, maxTokens: 6500 } : aiRequest;
+      const compactRequest = provider === 'opencode' ? { ...compactAiRequest, maxTokens: 5000 } : compactAiRequest;
+      const response = await responseProvider(request, dependencies);
       if ((provider === 'openrouter' || provider === 'opencode') && responseWasTruncated(response.finishReason)) {
-        const compactResponse = await responseProvider(compactAiRequest, dependencies);
+        const compactResponse = await responseProvider(compactRequest, dependencies);
         return processResponse(compactResponse, provider === 'openrouter' ? 'OpenRouter' : 'OpenCode');
       }
       const label = provider === 'openrouter' ? 'OpenRouter' : provider === 'opencode' ? 'OpenCode' : 'Gemini';

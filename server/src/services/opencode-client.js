@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AppError } from '../utils/errors.js';
+import { responseWasTruncated } from './ai-provider-fallback.js';
 
 export const DEFAULT_OPENCODE_MODEL = 'big-pickle';
 export const DEFAULT_OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
@@ -38,6 +39,8 @@ function jsonSchema(node) {
   if (type) schema.type = type;
   if (node?.description) schema.description = node.description;
   if (Array.isArray(node?.enum)) schema.enum = node.enum;
+  if (Number.isInteger(node?.minItems)) schema.minItems = node.minItems;
+  if (Number.isInteger(node?.maxItems)) schema.maxItems = node.maxItems;
   if (node?.items) schema.items = jsonSchema(node.items);
   if (node?.properties) {
     schema.properties = Object.fromEntries(Object.entries(node.properties).map(([key, value]) => [key, jsonSchema(value)]));
@@ -92,9 +95,13 @@ function shouldTryNextModel(error) {
   const summary = `${error?.code ?? ''} ${error?.message ?? ''}`.toUpperCase();
   if ([429, 500, 502, 503, 504, 404, 408, 409, 410].includes(status)) return true;
   if (status === 400 && /MODEL|UNAVAILABLE|DEPRECATED|NOT (INCLUDED|FOUND|SUPPORTED)|DOESN'T INCLUDE|DOES NOT INCLUDE|UNSUPPORTED/.test(summary)) return true;
-  if (/RATE.?LIMIT|QUOTA|INSUFFICIENT|FREEUSAGELIMIT|UNAVAILABLE|DEPRECATED|MODELNOTFOUND/.test(summary)) return true;
+  if (/RATE.?LIMIT|QUOTA|INSUFFICIENT|FREEUSAGELIMIT|UNAVAILABLE|DEPRECATED|MODELNOTFOUND|UNUSABLE/.test(summary)) return true;
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError' || /TIMEOUT|TIMED OUT/.test(summary)) return true;
   return false;
+}
+
+function isUnusableResult(result) {
+  return responseWasTruncated(result?.finishReason) || !String(result?.text || '').trim();
 }
 
 export async function requestOpenCode({ messages, schemaName, schema, maxTokens, timeoutMs, allowPlainJsonFallback = false }, dependencies = {}) {
@@ -142,23 +149,37 @@ export async function requestOpenCode({ messages, schemaName, schema, maxTokens,
   const sendWithModel = async (model) => {
     const requestPayload = buildOpenCodePayload({ model, messages, schemaName, schema, maxTokens });
     try {
-      return await send(model, requestPayload);
+      const result = await send(model, requestPayload);
+      if (allowPlainJsonFallback && isUnusableResult(result)) {
+        throw Object.assign(new Error('OpenCode returned an unusable structured response.'), { status: 502, code: 'UNUSABLE_STRUCTURED_RESPONSE' });
+      }
+      return result;
     } catch (error) {
-      if (!allowPlainJsonFallback || !isStructuredOutputRejection(error)) throw error;
-      console.warn('[opencode] structured output was rejected; retrying with schema-guided JSON text', {
+      const unusable = error?.code === 'UNUSABLE_STRUCTURED_RESPONSE';
+      if (!allowPlainJsonFallback || (!isStructuredOutputRejection(error) && !unusable)) throw error;
+      console.warn('[opencode] structured output was rejected or unusable; retrying with schema-guided JSON text', {
         model,
         status: Number(error.status ?? error.statusCode) || null,
         code: typeof error.code === 'string' ? error.code.slice(0, 80) : null,
       });
+      const fallbackMaxTokens = Math.min(Math.max(maxTokens, 6000), 9000);
       const fallbackPayload = buildOpenCodePayload({
         model,
         messages: withSchemaInstructions(messages, schemaName, schema),
         schemaName,
         schema,
-        maxTokens,
+        maxTokens: fallbackMaxTokens,
         structuredOutput: false,
       });
-      return send(model, fallbackPayload);
+      const fallbackResult = await send(model, fallbackPayload);
+      if (isUnusableResult(fallbackResult)) {
+        const err = new Error('OpenCode returned an empty or truncated response after retry.');
+        err.status = 502;
+        err.code = 'UNUSABLE_RESPONSE';
+        err.name = 'OpenCodeApiError';
+        throw err;
+      }
+      return fallbackResult;
     }
   };
 
