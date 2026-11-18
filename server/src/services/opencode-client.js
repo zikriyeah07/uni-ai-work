@@ -1,15 +1,35 @@
+import { randomUUID } from 'node:crypto';
 import { AppError } from '../utils/errors.js';
 
 export const DEFAULT_OPENCODE_MODEL = 'big-pickle';
 export const DEFAULT_OPENCODE_BASE_URL = 'https://opencode.ai/zen/v1';
+
+function normalizeModelList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function uniqueModels(models) {
+  return [...new Set(models.filter(Boolean))];
+}
+
+export function getOpenCodeModels() {
+  const configured = uniqueModels([
+    ...normalizeModelList(process.env.OPENCODE_MODEL),
+    ...normalizeModelList(process.env.OPENCODE_FALLBACK_MODELS),
+  ]);
+  return configured.length ? configured : [DEFAULT_OPENCODE_MODEL];
+}
 
 export function getOpenCodeConfig() {
   const apiKey = process.env.OPENCODE_API_KEY?.trim();
   if (!apiKey) throw new AppError('OpenCode is unavailable because OPENCODE_API_KEY is missing from this server environment.', 503, 'OPENCODE_NOT_CONFIGURED');
 
   const baseUrl = (process.env.OPENCODE_BASE_URL?.trim() || DEFAULT_OPENCODE_BASE_URL).replace(/\/+$/, '');
-  const model = process.env.OPENCODE_MODEL?.trim() || DEFAULT_OPENCODE_MODEL;
-  return { apiKey, baseUrl, model };
+  const models = getOpenCodeModels();
+  return { apiKey, baseUrl, model: models[0], models };
 }
 
 function jsonSchema(node) {
@@ -67,14 +87,22 @@ function withSchemaInstructions(messages, schemaName, schema) {
     : message);
 }
 
-import { randomUUID } from 'node:crypto';
+function shouldTryNextModel(error) {
+  const status = Number(error?.status ?? error?.statusCode);
+  const summary = `${error?.code ?? ''} ${error?.message ?? ''}`.toUpperCase();
+  if ([429, 500, 502, 503, 504, 404, 408, 409, 410].includes(status)) return true;
+  if (status === 400 && /MODEL|UNAVAILABLE|DEPRECATED|NOT (INCLUDED|FOUND|SUPPORTED)|DOESN'T INCLUDE|DOES NOT INCLUDE|UNSUPPORTED/.test(summary)) return true;
+  if (/RATE.?LIMIT|QUOTA|INSUFFICIENT|FREEUSAGELIMIT|UNAVAILABLE|DEPRECATED|MODELNOTFOUND/.test(summary)) return true;
+  if (error?.name === 'TimeoutError' || error?.name === 'AbortError' || /TIMEOUT|TIMED OUT/.test(summary)) return true;
+  return false;
+}
 
 export async function requestOpenCode({ messages, schemaName, schema, maxTokens, timeoutMs, allowPlainJsonFallback = false }, dependencies = {}) {
-  const { apiKey, baseUrl, model } = getOpenCodeConfig();
+  const { apiKey, baseUrl, models } = getOpenCodeConfig();
   const fetchImpl = dependencies.fetch ?? globalThis.fetch;
   const endpoint = `${baseUrl}/chat/completions`;
 
-  const send = async (requestPayload) => {
+  const send = async (model, requestPayload) => {
     const response = await fetchImpl(endpoint, {
       method: 'POST',
       headers: {
@@ -106,29 +134,59 @@ export async function requestOpenCode({ messages, schemaName, schema, maxTokens,
       text: responseText(choice?.message?.content),
       annotations: Array.isArray(choice?.message?.annotations) ? choice.message.annotations : [],
       model: typeof payload?.model === 'string' ? payload.model : model,
+      requestedModel: model,
       finishReason: choice?.finish_reason ?? null,
     };
   };
 
-  const requestPayload = buildOpenCodePayload({ model, messages, schemaName, schema, maxTokens });
-  try {
-    return await send(requestPayload);
-  } catch (error) {
-    if (!allowPlainJsonFallback || !isStructuredOutputRejection(error)) throw error;
-    console.warn('[opencode] structured output was rejected; retrying with schema-guided JSON text', {
-      status: Number(error.status ?? error.statusCode) || null,
-      code: typeof error.code === 'string' ? error.code.slice(0, 80) : null,
-    });
-    const fallbackPayload = buildOpenCodePayload({
-      model,
-      messages: withSchemaInstructions(messages, schemaName, schema),
-      schemaName,
-      schema,
-      maxTokens,
-      structuredOutput: false,
-    });
-    return send(fallbackPayload);
+  const sendWithModel = async (model) => {
+    const requestPayload = buildOpenCodePayload({ model, messages, schemaName, schema, maxTokens });
+    try {
+      return await send(model, requestPayload);
+    } catch (error) {
+      if (!allowPlainJsonFallback || !isStructuredOutputRejection(error)) throw error;
+      console.warn('[opencode] structured output was rejected; retrying with schema-guided JSON text', {
+        model,
+        status: Number(error.status ?? error.statusCode) || null,
+        code: typeof error.code === 'string' ? error.code.slice(0, 80) : null,
+      });
+      const fallbackPayload = buildOpenCodePayload({
+        model,
+        messages: withSchemaInstructions(messages, schemaName, schema),
+        schemaName,
+        schema,
+        maxTokens,
+        structuredOutput: false,
+      });
+      return send(model, fallbackPayload);
+    }
+  };
+
+  let lastError;
+  for (let index = 0; index < models.length; index += 1) {
+    const model = models[index];
+    try {
+      const result = await sendWithModel(model);
+      if (index > 0) console.warn(`[opencode] succeeded after model fallback`, { model, previousModel: models[index - 1] });
+      return result;
+    } catch (error) {
+      lastError = error;
+      const hasNext = index < models.length - 1;
+      if (hasNext && shouldTryNextModel(error)) {
+        console.warn('[opencode] model failed; trying fallback model', {
+          model,
+          nextModel: models[index + 1],
+          status: Number(error?.status ?? error?.statusCode) || null,
+          code: typeof error?.code === 'string' ? error.code.slice(0, 80) : null,
+          message: String(error?.message ?? '').slice(0, 160),
+        });
+        continue;
+      }
+      throw error;
+    }
   }
+
+  throw lastError || new AppError('OpenCode could not complete the request.', 502, 'OPENCODE_UNAVAILABLE');
 }
 
 function safeOpenCodeDetail(error) {
