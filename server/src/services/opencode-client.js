@@ -131,23 +131,28 @@ export async function requestOpenCode({ messages, schemaName, schema, maxTokens,
   }
 }
 
+function safeOpenCodeDetail(error) {
+  const detail = String(error?.message ?? '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  return detail ? ` (${detail})` : '';
+}
+
 export function mapOpenCodeError(error, task) {
   const status = Number(error?.status ?? error?.statusCode);
   const summary = `${error?.code ?? ''} ${error?.message ?? ''}`.toUpperCase();
   if (status === 429 || /RATE.?LIMIT|QUOTA|INSUFFICIENT/.test(summary)) {
-    return new AppError('OpenCode rate or quota limits were reached. Wait before trying again or check your credits/model.', 429, 'OPENCODE_RATE_LIMIT');
+    return new AppError(`OpenCode rate or quota limits were reached. Wait before trying again or check credits/model${safeOpenCodeDetail(error)}.`, 429, 'OPENCODE_RATE_LIMIT');
   }
   if (status === 401 || status === 403) {
-    return new AppError('OpenCode rejected the API key or model. Check OPENCODE_API_KEY and OPENCODE_MODEL.', 502, 'OPENCODE_ACCESS_DENIED');
+    return new AppError(`OpenCode rejected the API key or model. Check OPENCODE_API_KEY and OPENCODE_MODEL${safeOpenCodeDetail(error)}.`, 502, 'OPENCODE_ACCESS_DENIED');
   }
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError' || /timeout|timed out/i.test(error?.message ?? '')) {
     return new AppError(`${task} timed out on OpenCode. Try again with a shorter request.`, 504, 'OPENCODE_TIMEOUT');
   }
   if (status === 400 || status === 404 || status === 422) {
-    return new AppError(`OpenCode rejected the ${task.toLowerCase()} request. Check OPENCODE_MODEL, OPENCODE_BASE_URL, and request support.`, 502, 'OPENCODE_BAD_REQUEST');
+    return new AppError(`OpenCode rejected the ${task.toLowerCase()} request. Check OPENCODE_MODEL, OPENCODE_BASE_URL, and request support${safeOpenCodeDetail(error)}.`, 502, 'OPENCODE_BAD_REQUEST');
   }
-  if (status >= 500) return new AppError(`OpenCode is temporarily unavailable for ${task.toLowerCase()}.`, 502, 'OPENCODE_UNAVAILABLE');
-  return new AppError(`OpenCode could not complete the ${task.toLowerCase()}. Check the API key, model, and network.`, 502, 'OPENCODE_UNAVAILABLE');
+  if (status >= 500) return new AppError(`OpenCode is temporarily unavailable for ${task.toLowerCase()}${safeOpenCodeDetail(error)}.`, 502, 'OPENCODE_UNAVAILABLE');
+  return new AppError(`OpenCode could not complete the ${task.toLowerCase()}. Check the API key, model, and network${safeOpenCodeDetail(error)}.`, 502, 'OPENCODE_UNAVAILABLE');
 }
 
 export function logOpenCodeFailure(area, error) {

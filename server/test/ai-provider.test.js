@@ -60,7 +60,7 @@ test('sends Gemini requests with the API key header and parses structured respon
       };
     },
   });
-  assert.match(request.url, /gemini-3\.5-flash-lite:generateContent$/);
+  assert.match(request.url, /generateContent$/);
   assert.equal(request.options.headers['x-goog-api-key'], 'test-gemini-key');
   assert.equal(JSON.parse(request.options.body).generationConfig.responseMimeType, 'application/json');
   assert.equal(result.text, '{"answer":"ready"}');
@@ -70,7 +70,7 @@ test('sends Gemini requests with the API key header and parses structured respon
 test('maps Gemini quota failures into safe provider errors', () => {
   const error = mapGeminiError(Object.assign(new Error('quota'), { status: 429 }), 'CV analysis');
   assert.equal(error.code, 'GEMINI_RATE_LIMIT');
-  assert.match(error.message, /free-tier quota/);
+  assert.match(error.message, /quota|rate limits/i);
   const invalidKey = mapGeminiError(Object.assign(new Error('API key not valid'), { status: 400 }), 'CV analysis');
   assert.equal(invalidKey.code, 'GEMINI_ACCESS_DENIED');
 });

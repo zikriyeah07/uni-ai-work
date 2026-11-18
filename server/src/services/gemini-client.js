@@ -1,6 +1,6 @@
 import { AppError } from '../utils/errors.js';
 
-export const DEFAULT_GEMINI_MODEL = 'gemini-3.5-flash-lite';
+export const DEFAULT_GEMINI_MODEL = 'gemini-2.0-flash';
 const GENERATE_CONTENT_URL = 'https://generativelanguage.googleapis.com/v1beta/models';
 
 export function getGeminiConfig() {
@@ -56,53 +56,92 @@ function latencyConfig(model) {
   return /^gemini-3(?:\.|-)/i.test(model) ? { thinkingConfig: { thinkingLevel: 'low' } } : {};
 }
 
-export function buildGeminiPayload({ model, messages, schema, maxTokens }) {
+function schemaInstruction(schema) {
+  return `Return one valid JSON object. Follow this JSON Schema exactly and return no markdown: ${JSON.stringify(toGeminiSchema(schema))}`;
+}
+
+function withGeminiSchemaPrompt(messages, schema) {
+  const instruction = schemaInstruction(schema);
+  if (!messages.length) return [{ role: 'user', content: instruction }];
+  const next = [...messages];
+  const systemIndex = next.findIndex((message) => message.role === 'system' && typeof message.content === 'string');
+  if (systemIndex >= 0) {
+    next[systemIndex] = { ...next[systemIndex], content: `${next[systemIndex].content}\n\n${instruction}` };
+    return next;
+  }
+  const last = next[next.length - 1];
+  if (last && typeof last.content === 'string') {
+    next[next.length - 1] = { ...last, content: `${last.content}\n\n${instruction}` };
+  } else {
+    next.push({ role: 'user', content: instruction });
+  }
+  return next;
+}
+
+export function buildGeminiPayload({ model, messages, schema, maxTokens, includeSchema = true }) {
   const { contents, systemInstruction } = toGeminiContents(messages);
   return {
     contents,
     ...(systemInstruction ? { systemInstruction: { parts: [{ text: systemInstruction }] } } : {}),
     generationConfig: {
       responseMimeType: 'application/json',
-      responseSchema: toGeminiSchema(schema),
+      ...(includeSchema ? { responseSchema: toGeminiSchema(schema) } : {}),
       maxOutputTokens: maxTokens,
       ...latencyConfig(model),
     },
   };
 }
 
-export async function requestGemini({ messages, schema, maxTokens, timeoutMs }, dependencies = {}) {
+export async function requestGemini({ messages, schema, maxTokens, timeoutMs, allowPlainJsonFallback = true }, dependencies = {}) {
   const { apiKey, model } = getGeminiConfig();
   const fetchImpl = dependencies.fetch ?? globalThis.fetch;
-  const response = await fetchImpl(`${GENERATE_CONTENT_URL}/${encodeURIComponent(model)}:generateContent`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-goog-api-key': apiKey,
-    },
-    body: JSON.stringify(buildGeminiPayload({ model, messages, schema, maxTokens })),
-    signal: AbortSignal.timeout(timeoutMs),
-  });
+  const endpoint = `${GENERATE_CONTENT_URL}/${encodeURIComponent(model)}:generateContent`;
 
-  let payload;
+  const send = async (requestMessages, includeSchema = true) => {
+    const response = await fetchImpl(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-goog-api-key': apiKey,
+      },
+      body: JSON.stringify(buildGeminiPayload({ model, messages: requestMessages, schema, maxTokens, includeSchema })),
+      signal: AbortSignal.timeout(timeoutMs),
+    });
+
+    let payload;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (!response.ok) {
+      const detail = payload?.error?.message ?? `Gemini returned HTTP ${response.status}.`;
+      const error = new Error(String(detail));
+      error.status = response.status;
+      error.code = typeof payload?.error?.status === 'string' ? payload.error.status : undefined;
+      error.name = 'GeminiApiError';
+      throw error;
+    }
+
+    const candidate = payload?.candidates?.[0];
+    const text = Array.isArray(candidate?.content?.parts)
+      ? candidate.content.parts.map((part) => typeof part?.text === 'string' ? part.text : '').join('')
+      : '';
+    return { text, model, finishReason: candidate?.finishReason ?? null };
+  };
+
   try {
-    payload = await response.json();
-  } catch {
-    payload = null;
+    return await send(messages, true);
+  } catch (error) {
+    const detail = String(error?.message ?? '').toLowerCase();
+    const schemaRejected = [400, 404, 422].includes(Number(error?.status)) && /schema|response.?schema|response.?mime|json|unsupported|invalid|unknown name|not found/.test(detail);
+    if (!allowPlainJsonFallback || !schemaRejected) throw error;
+    console.warn('[gemini] structured schema was rejected; retrying with JSON-mode prompt', {
+      status: Number(error.status) || null,
+      code: typeof error.code === 'string' ? error.code.slice(0, 80) : null,
+    });
+    return send(withGeminiSchemaPrompt(messages, schema), false);
   }
-  if (!response.ok) {
-    const detail = payload?.error?.message ?? `Gemini returned HTTP ${response.status}.`;
-    const error = new Error(String(detail));
-    error.status = Number(payload?.error?.code) || response.status;
-    error.code = typeof payload?.error?.status === 'string' ? payload.error.status : undefined;
-    error.name = 'GeminiApiError';
-    throw error;
-  }
-
-  const candidate = payload?.candidates?.[0];
-  const text = Array.isArray(candidate?.content?.parts)
-    ? candidate.content.parts.map((part) => typeof part?.text === 'string' ? part.text : '').join('')
-    : '';
-  return { text, model, finishReason: candidate?.finishReason ?? null };
 }
 
 export function logGeminiFailure(area, error) {
@@ -114,21 +153,26 @@ export function logGeminiFailure(area, error) {
   });
 }
 
+function safeGeminiDetail(error) {
+  const detail = String(error?.message ?? '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  return detail ? ` (${detail})` : '';
+}
+
 export function mapGeminiError(error, task) {
   const status = Number(error?.status ?? error?.statusCode);
   const summary = `${error?.code ?? ''} ${error?.message ?? ''}`.toUpperCase();
   if (status === 429 || /RESOURCE_EXHAUSTED|QUOTA|RATE.?LIMIT/.test(summary)) {
-    return new AppError('Gemini free-tier quota or rate limits were reached.', 429, 'GEMINI_RATE_LIMIT');
+    return new AppError(`Gemini free-tier quota or rate limits were reached${safeGeminiDetail(error)}.`, 429, 'GEMINI_RATE_LIMIT');
   }
   if (status === 401 || status === 403 || /API.?KEY|PERMISSION_DENIED|UNAUTHENTICATED/.test(summary)) {
-    return new AppError('Gemini rejected the API key or model. Check GEMINI_API_KEY and GEMINI_MODEL.', 502, 'GEMINI_ACCESS_DENIED');
+    return new AppError(`Gemini rejected the API key or model. Check GEMINI_API_KEY and GEMINI_MODEL${safeGeminiDetail(error)}.`, 502, 'GEMINI_ACCESS_DENIED');
   }
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError' || /timeout|timed out/i.test(error?.message ?? '')) {
     return new AppError(`${task} timed out on Gemini.`, 504, 'GEMINI_TIMEOUT');
   }
   if (status === 400 || status === 404 || status === 422) {
-    return new AppError(`Gemini rejected the ${task.toLowerCase()} request. Check the model and structured-output support.`, 502, 'GEMINI_BAD_REQUEST');
+    return new AppError(`Gemini rejected the ${task.toLowerCase()} request. Check GEMINI_MODEL and output support${safeGeminiDetail(error)}.`, 502, 'GEMINI_BAD_REQUEST');
   }
-  if (status >= 500) return new AppError(`Gemini is temporarily unavailable for ${task.toLowerCase()}.`, 502, 'GEMINI_UNAVAILABLE');
-  return new AppError(`Gemini could not complete ${task.toLowerCase()}. Check the API key, model, and network.`, 502, 'GEMINI_UNAVAILABLE');
+  if (status >= 500) return new AppError(`Gemini is temporarily unavailable for ${task.toLowerCase()}${safeGeminiDetail(error)}.`, 502, 'GEMINI_UNAVAILABLE');
+  return new AppError(`Gemini could not complete ${task.toLowerCase()}. Check the API key, model, and network${safeGeminiDetail(error)}.`, 502, 'GEMINI_UNAVAILABLE');
 }

@@ -128,23 +128,28 @@ export async function requestOpenRouter({ messages, schemaName, schema, maxToken
   }
 }
 
+function safeOpenRouterDetail(error) {
+  const detail = String(error?.message ?? '').replace(/\s+/g, ' ').trim().slice(0, 180);
+  return detail ? ` (${detail})` : '';
+}
+
 export function mapOpenRouterError(error, task) {
   const status = Number(error?.status ?? error?.statusCode);
   const summary = `${error?.code ?? ''} ${error?.message ?? ''}`.toUpperCase();
   if (status === 429 || /RATE.?LIMIT|QUOTA/.test(summary)) {
-    return new AppError('OpenRouter free-model limits were reached. Wait before trying again, or choose another free model in OPENROUTER_MODEL.', 429, 'OPENROUTER_RATE_LIMIT');
+    return new AppError(`OpenRouter free-model limits were reached. Wait before trying again, or choose another free model in OPENROUTER_MODEL${safeOpenRouterDetail(error)}.`, 429, 'OPENROUTER_RATE_LIMIT');
   }
   if (status === 401 || status === 403) {
-    return new AppError('OpenRouter rejected the API key or model. Check OPENROUTER_API_KEY and OPENROUTER_MODEL.', 502, 'OPENROUTER_ACCESS_DENIED');
+    return new AppError(`OpenRouter rejected the API key or model. Check OPENROUTER_API_KEY and OPENROUTER_MODEL${safeOpenRouterDetail(error)}.`, 502, 'OPENROUTER_ACCESS_DENIED');
   }
   if (error?.name === 'TimeoutError' || error?.name === 'AbortError' || /timeout|timed out/i.test(error?.message ?? '')) {
     return new AppError(`${task} timed out. Try again with a shorter request.`, 504, 'OPENROUTER_TIMEOUT');
   }
   if (status === 400 || status === 404 || status === 422) {
-    return new AppError(`OpenRouter rejected the ${task.toLowerCase()} request. Check the free model's file and structured-output support.`, 502, 'OPENROUTER_BAD_REQUEST');
+    return new AppError(`OpenRouter rejected the ${task.toLowerCase()} request. Check the free model's file and structured-output support${safeOpenRouterDetail(error)}.`, 502, 'OPENROUTER_BAD_REQUEST');
   }
-  if (status >= 500) return new AppError(`OpenRouter is temporarily unavailable. Try the ${task.toLowerCase()} again shortly.`, 502, 'OPENROUTER_UNAVAILABLE');
-  return new AppError(`OpenRouter could not complete the ${task.toLowerCase()}. Check the API key, free model, and network.`, 502, 'OPENROUTER_UNAVAILABLE');
+  if (status >= 500) return new AppError(`OpenRouter is temporarily unavailable. Try the ${task.toLowerCase()} again shortly${safeOpenRouterDetail(error)}.`, 502, 'OPENROUTER_UNAVAILABLE');
+  return new AppError(`OpenRouter could not complete the ${task.toLowerCase()}. Check the API key, free model, and network${safeOpenRouterDetail(error)}.`, 502, 'OPENROUTER_UNAVAILABLE');
 }
 
 export function logOpenRouterFailure(area, error) {

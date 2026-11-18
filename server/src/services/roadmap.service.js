@@ -35,36 +35,29 @@ function text(value, name, max = 700, min = 1) {
 }
 
 export function validateRoadmap(value, durationMonths) {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new AppError('The AI provider returned an invalid roadmap structure.', 502, 'ROADMAP_INVALID_RESPONSE');
-  if (!Array.isArray(value.milestones) || !value.milestones.length) throw new AppError('The AI provider returned an invalid roadmap: milestone count did not match the requested duration.', 502, 'ROADMAP_INVALID_RESPONSE');
-  const milestonesIn = value.milestones.slice(0, Math.min(durationMonths, 12));
+  if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['title', 'overview', 'milestones', 'weeklyRhythm', 'successChecks'].includes(key))) throw new AppError('The AI provider returned an invalid roadmap structure.', 502, 'ROADMAP_INVALID_RESPONSE');
+  if (!Array.isArray(value.milestones) || !value.milestones.length || value.milestones.length > Math.min(durationMonths, 12)) throw new AppError('The AI provider returned an invalid roadmap: milestone count did not match the requested duration.', 502, 'ROADMAP_INVALID_RESPONSE');
   let priorMonth = 0;
-  const milestones = milestonesIn.map((item, index) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item)) throw new AppError('The AI provider returned an invalid roadmap: milestone months must be unique, ascending, and within the plan.', 502, 'ROADMAP_INVALID_RESPONSE');
-    let month = Number.isInteger(item.month) ? item.month : Number(item.month);
-    if (!Number.isInteger(month) || month <= priorMonth) month = Math.min(priorMonth + 1, durationMonths);
-    if (month > durationMonths) month = durationMonths;
-    priorMonth = month;
-    const tasksIn = Array.isArray(item.tasks) ? item.tasks.slice(0, 5) : [];
-    if (tasksIn.length < 2) throw new AppError(`The AI provider returned an invalid roadmap: milestone ${index + 1} needs two to five tasks.`, 502, 'ROADMAP_INVALID_RESPONSE');
+  const milestones = value.milestones.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some((key) => !['month', 'phase', 'focus', 'outcome', 'tasks', 'deliverable'].includes(key)) || !Number.isInteger(item.month) || item.month <= priorMonth || item.month > durationMonths) throw new AppError('The AI provider returned an invalid roadmap: milestone months must be unique, ascending, and within the plan.', 502, 'ROADMAP_INVALID_RESPONSE');
+    priorMonth = item.month;
+    if (!Array.isArray(item.tasks) || item.tasks.length < 2 || item.tasks.length > 5) throw new AppError(`The AI provider returned an invalid roadmap: milestone ${index + 1} needs two to five tasks.`, 502, 'ROADMAP_INVALID_RESPONSE');
     return {
-      month,
+      month: item.month,
       phase: text(item.phase, `milestones[${index}].phase`, 120),
       focus: text(item.focus, `milestones[${index}].focus`, 200),
       outcome: text(item.outcome, `milestones[${index}].outcome`, 500),
-      tasks: tasksIn.map((task, taskIndex) => text(task, `milestones[${index}].tasks[${taskIndex}]`, 300)),
+      tasks: item.tasks.map((task, taskIndex) => text(task, `milestones[${index}].tasks[${taskIndex}]`, 300)),
       deliverable: text(item.deliverable, `milestones[${index}].deliverable`, 300),
     };
   });
-  const weeklyRhythmIn = Array.isArray(value.weeklyRhythm) ? value.weeklyRhythm.slice(0, 5) : [];
-  const successChecksIn = Array.isArray(value.successChecks) ? value.successChecks.slice(0, 5) : [];
-  if (weeklyRhythmIn.length < 2 || successChecksIn.length < 2) throw new AppError('The AI provider returned an invalid roadmap: weekly rhythm or success checks were missing.', 502, 'ROADMAP_INVALID_RESPONSE');
+  if (!Array.isArray(value.weeklyRhythm) || value.weeklyRhythm.length < 2 || value.weeklyRhythm.length > 5 || !Array.isArray(value.successChecks) || value.successChecks.length < 2 || value.successChecks.length > 5) throw new AppError('The AI provider returned an invalid roadmap: weekly rhythm or success checks were missing.', 502, 'ROADMAP_INVALID_RESPONSE');
   return {
     title: text(value.title, 'title', 160),
     overview: text(value.overview, 'overview', 700, 10),
     milestones,
-    weeklyRhythm: weeklyRhythmIn.map((item, index) => text(item, `weeklyRhythm[${index}]`, 220)),
-    successChecks: successChecksIn.map((item, index) => text(item, `successChecks[${index}]`, 220)),
+    weeklyRhythm: value.weeklyRhythm.map((item, index) => text(item, `weeklyRhythm[${index}]`, 220)),
+    successChecks: value.successChecks.map((item, index) => text(item, `successChecks[${index}]`, 220)),
   };
 }
 
