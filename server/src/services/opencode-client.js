@@ -147,22 +147,11 @@ export async function requestOpenCode({ messages, schemaName, schema, maxTokens,
   };
 
   const sendWithModel = async (model) => {
-    const requestPayload = buildOpenCodePayload({ model, messages, schemaName, schema, maxTokens });
-    try {
-      const result = await send(model, requestPayload);
-      if (allowPlainJsonFallback && isUnusableResult(result)) {
-        throw Object.assign(new Error('OpenCode returned an unusable structured response.'), { status: 502, code: 'UNUSABLE_STRUCTURED_RESPONSE' });
+    const tryPlain = async (reason = 'fallback') => {
+      if (reason !== 'primary') {
+        console.warn('[opencode] structured output was rejected or unusable; retrying with schema-guided JSON text', { model, reason });
       }
-      return result;
-    } catch (error) {
-      const unusable = error?.code === 'UNUSABLE_STRUCTURED_RESPONSE';
-      if (!allowPlainJsonFallback || (!isStructuredOutputRejection(error) && !unusable)) throw error;
-      console.warn('[opencode] structured output was rejected or unusable; retrying with schema-guided JSON text', {
-        model,
-        status: Number(error.status ?? error.statusCode) || null,
-        code: typeof error.code === 'string' ? error.code.slice(0, 80) : null,
-      });
-      const fallbackMaxTokens = Math.min(Math.max(maxTokens, 6000), 9000);
+      const fallbackMaxTokens = Math.min(Math.max(maxTokens, reason === 'primary' ? 4500 : 6000), 8000);
       const fallbackPayload = buildOpenCodePayload({
         model,
         messages: withSchemaInstructions(messages, schemaName, schema),
@@ -173,13 +162,23 @@ export async function requestOpenCode({ messages, schemaName, schema, maxTokens,
       });
       const fallbackResult = await send(model, fallbackPayload);
       if (isUnusableResult(fallbackResult)) {
-        const err = new Error('OpenCode returned an empty or truncated response after retry.');
+        const err = new Error('OpenCode returned an empty or truncated response.');
         err.status = 502;
         err.code = 'UNUSABLE_RESPONSE';
         err.name = 'OpenCodeApiError';
         throw err;
       }
       return fallbackResult;
+    };
+
+    if (allowPlainJsonFallback) return tryPlain('primary');
+
+    const requestPayload = buildOpenCodePayload({ model, messages, schemaName, schema, maxTokens });
+    try {
+      return await send(model, requestPayload);
+    } catch (error) {
+      if (!isStructuredOutputRejection(error)) throw error;
+      return tryPlain('structured-rejected');
     }
   };
 

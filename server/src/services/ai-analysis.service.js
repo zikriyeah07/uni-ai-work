@@ -343,8 +343,12 @@ export async function generateAiAnalysis({ findings = [], pageFacts = {}, pageSp
         : provider === 'opencode'
           ? (dependencies.requestOpenCode ?? requestOpenCode)
           : (dependencies.requestGemini ?? requestGemini);
-      const request = provider === 'opencode' ? { ...aiRequest, maxTokens: 6500 } : aiRequest;
-      const compactRequest = provider === 'opencode' ? { ...compactAiRequest, maxTokens: 5000 } : compactAiRequest;
+      const request = provider === 'opencode'
+        ? { ...compactAiRequest, maxTokens: 4500 }
+        : aiRequest;
+      const compactRequest = provider === 'opencode'
+        ? { ...compactAiRequest, maxTokens: 4500 }
+        : compactAiRequest;
       const response = await responseProvider(request, dependencies);
       if ((provider === 'openrouter' || provider === 'opencode') && responseWasTruncated(response.finishReason)) {
         const compactResponse = await responseProvider(compactRequest, dependencies);

@@ -6,7 +6,7 @@ function calculatedOverall(pageSpeed) {
 
 function readableServiceError(error, serviceName) {
   let detail = typeof error?.message === 'string' ? error.message : '';
-  for (const secret of [process.env.OPENROUTER_API_KEY, process.env.GEMINI_API_KEY].filter((value) => typeof value === 'string' && value.length > 5)) {
+  for (const secret of [process.env.OPENROUTER_API_KEY, process.env.GEMINI_API_KEY, process.env.OPENCODE_API_KEY].filter((value) => typeof value === 'string' && value.length > 5)) {
     detail = detail.replaceAll(secret, '[redacted]');
   }
   detail = detail.replace(/\s+/g, ' ').trim().slice(0, 320);
@@ -29,41 +29,65 @@ export async function executeScan({ url, device, onProgress = () => {} }, depend
       (error) => ({ error }),
     );
   };
-  const audit = await auditWebsite(url, { onProgress, onPageResolved: startPageSpeed });
-  if (!pageSpeedTask) startPageSpeed(audit.finalUrl);
-  const pageSpeedOutcome = await pageSpeedTask;
+  let audit;
   try {
-    if (pageSpeedOutcome.error) throw pageSpeedOutcome.error;
-    pageSpeed = pageSpeedOutcome.result;
-    onProgress({ stage: 'pagespeed', status: 'complete', message: 'PageSpeed scores and available web vitals were received.' });
+    audit = await auditWebsite(url, { onProgress, onPageResolved: startPageSpeed });
   } catch (error) {
-    const message = error.message || 'Google PageSpeed analysis failed.';
-    warnings.push(message);
-    onProgress({ stage: 'pagespeed', status: 'unavailable', message: `${message} Continuing with the HTML audit.` });
+    if (pageSpeedTask) pageSpeedTask.catch(() => {});
+    throw error;
   }
+  if (!pageSpeedTask) startPageSpeed(audit.finalUrl);
 
   onProgress({ stage: 'ai', status: 'running', message: 'Generating recommendations from confirmed findings.' });
   let aiAnalysis = null;
-  try {
-    const result = await generateAiAnalysis({
-      url: audit.finalUrl,
-      device,
-      findings: audit.findings,
-      pageFacts: audit.pageFacts,
-      pageSpeed,
-    });
-    aiAnalysis = result.analysis;
-    warnings.push(...result.warnings);
-    onProgress({
-      stage: 'ai',
-      status: aiAnalysis ? 'complete' : 'unavailable',
-      message: result.analysis ? 'Evidence-based recommendations are ready.' : (result.warnings[0] ?? 'AI recommendations are unavailable.'),
-    });
-  } catch (error) {
-    const message = `${readableServiceError(error, 'AI recommendations')} Check the configured provider keys, models, and free-tier limits.`;
-    warnings.push(message);
-    onProgress({ stage: 'ai', status: 'unavailable', message });
-  }
+
+  const aiTask = (async () => {
+    try {
+      const result = await generateAiAnalysis({
+        url: audit.finalUrl,
+        device,
+        findings: audit.findings,
+        pageFacts: audit.pageFacts,
+        pageSpeed: null,
+      });
+      aiAnalysis = result.analysis;
+      warnings.push(...(result.warnings || []));
+      onProgress({
+        stage: 'ai',
+        status: aiAnalysis ? 'complete' : 'unavailable',
+        message: result.analysis ? 'Evidence-based recommendations are ready.' : (result.warnings?.[0] ?? 'AI recommendations are unavailable.'),
+      });
+    } catch (error) {
+      const message = `${readableServiceError(error, 'AI recommendations')} Check the configured provider keys, models, and free-tier limits.`;
+      warnings.push(message);
+      onProgress({ stage: 'ai', status: 'unavailable', message });
+    }
+  })();
+
+  const psiTask = (async () => {
+    const PAGE_SPEED_WAIT_MS = 30000;
+    let outcome = await Promise.race([
+      pageSpeedTask,
+      new Promise((resolve) => setTimeout(() => resolve({ timeout: true }), PAGE_SPEED_WAIT_MS)),
+    ]);
+    if (outcome?.timeout) {
+      warnings.push('PageSpeed took too long, so this report continues without PageSpeed scores.');
+      onProgress({ stage: 'pagespeed', status: 'unavailable', message: 'PageSpeed took too long. Continuing without PageSpeed scores.' });
+      pageSpeedTask.catch(() => {});
+      return;
+    }
+    try {
+      if (outcome.error) throw outcome.error;
+      pageSpeed = outcome.result;
+      onProgress({ stage: 'pagespeed', status: 'complete', message: 'PageSpeed scores and available web vitals were received.' });
+    } catch (error) {
+      const message = error.message || 'Google PageSpeed analysis failed.';
+      warnings.push(message);
+      onProgress({ stage: 'pagespeed', status: 'unavailable', message: `${message} Continuing with the HTML audit.` });
+    }
+  })();
+
+  await Promise.all([psiTask, aiTask]);
 
   const scan = {
     url: audit.finalUrl,
