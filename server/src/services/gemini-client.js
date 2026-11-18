@@ -6,7 +6,9 @@ const GENERATE_CONTENT_URL = 'https://generativelanguage.googleapis.com/v1beta/m
 export function getGeminiConfig() {
   const apiKey = process.env.GEMINI_API_KEY?.trim();
   if (!apiKey) throw new AppError('Gemini is not configured because GEMINI_API_KEY is missing.', 503, 'GEMINI_NOT_CONFIGURED');
-  return { apiKey, model: process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL };
+  let model = process.env.GEMINI_MODEL?.trim() || DEFAULT_GEMINI_MODEL;
+  model = model.replace(/^models\//i, '').replace(/^['"]|['"]$/g, '').trim() || DEFAULT_GEMINI_MODEL;
+  return { apiKey, model };
 }
 
 function toGeminiSchema(node) {

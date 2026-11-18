@@ -34,6 +34,16 @@ function text(value, name, max = 700, min = 1) {
   return value.trim();
 }
 
+function textArray(value, field, { minItems = 0, maxItems = 5, max = 220, defaults = [] } = {}) {
+  const items = Array.isArray(value) ? value : [];
+  const normalized = items
+    .filter((item) => typeof item === 'string' && item.trim())
+    .slice(0, maxItems)
+    .map((item, index) => text(item, `${field}[${index}]`, max));
+  if (normalized.length >= minItems) return normalized;
+  return defaults.slice(0, maxItems);
+}
+
 export function validateRoadmap(value, durationMonths) {
   if (!value || typeof value !== 'object' || Array.isArray(value) || Object.keys(value).some((key) => !['title', 'overview', 'milestones', 'weeklyRhythm', 'successChecks'].includes(key))) throw new AppError('The AI provider returned an invalid roadmap structure.', 502, 'ROADMAP_INVALID_RESPONSE');
   if (!Array.isArray(value.milestones) || !value.milestones.length || value.milestones.length > Math.min(durationMonths, 12)) throw new AppError('The AI provider returned an invalid roadmap: milestone count did not match the requested duration.', 502, 'ROADMAP_INVALID_RESPONSE');
@@ -51,13 +61,24 @@ export function validateRoadmap(value, durationMonths) {
       deliverable: text(item.deliverable, `milestones[${index}].deliverable`, 300),
     };
   });
-  if (!Array.isArray(value.weeklyRhythm) || value.weeklyRhythm.length < 2 || value.weeklyRhythm.length > 5 || !Array.isArray(value.successChecks) || value.successChecks.length < 2 || value.successChecks.length > 5) throw new AppError('The AI provider returned an invalid roadmap: weekly rhythm or success checks were missing.', 502, 'ROADMAP_INVALID_RESPONSE');
+  const weeklyRhythm = textArray(value.weeklyRhythm, 'weeklyRhythm', {
+    minItems: 2,
+    maxItems: 5,
+    max: 220,
+    defaults: ['Reserve focused study blocks each week and protect that time.', 'Review progress weekly and adjust the next steps as needed.'],
+  });
+  const successChecks = textArray(value.successChecks, 'successChecks', {
+    minItems: 2,
+    maxItems: 5,
+    max: 220,
+    defaults: ['Each milestone has a completed deliverable you can show.', 'You can explain the key concepts and skills practiced in each phase.'],
+  });
   return {
     title: text(value.title, 'title', 160),
     overview: text(value.overview, 'overview', 700, 10),
     milestones,
-    weeklyRhythm: value.weeklyRhythm.map((item, index) => text(item, `weeklyRhythm[${index}]`, 220)),
-    successChecks: value.successChecks.map((item, index) => text(item, `successChecks[${index}]`, 220)),
+    weeklyRhythm,
+    successChecks,
   };
 }
 
