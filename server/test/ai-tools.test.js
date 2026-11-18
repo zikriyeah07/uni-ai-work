@@ -84,9 +84,10 @@ test('checks text CV evidence against the actual uploaded content', async (t) =>
   const output = cvResult();
   const result = await analyzeCv({ fileName: 'resume.txt', mimeType: 'text/plain', base64 }, { requestOpenRouter: fakeOpenRouter(output) });
   assert.equal(result.analysis.improvements[0].evidence, 'Built a REST API');
-  await assert.rejects(analyzeCv({ fileName: 'resume.txt', mimeType: 'text/plain', base64 }, {
+  const unverifiable = await analyzeCv({ fileName: 'resume.txt', mimeType: 'text/plain', base64 }, {
     requestOpenRouter: fakeOpenRouter(cvResult({ improvements: [{ ...output.improvements[0], evidence: 'Managed a team of 20 people' }] })),
-  }), { code: 'CV_INVALID_RESPONSE', message: /does not appear/ });
+  });
+  assert.equal(unverifiable.analysis.improvements[0].evidence, '');
 });
 
 test('rejects invalid CV score and maps OpenRouter limit and timeout failures', async (t) => {

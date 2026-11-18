@@ -65,11 +65,11 @@ export function validateCvAnalysis(value, sourceText = '') {
     if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalidResponse(`improvements[${index}] had an unexpected shape.`);
     const evidence = typeof item.evidence === 'string' ? item.evidence.trim().slice(0, 260) : '';
     const priority = priorities.has(item.priority) ? item.priority : 'Medium';
-    if (normalizedText && evidence && !normalizedText.includes(evidence.toLowerCase().replace(/\s+/g, ' '))) throw invalidResponse(`improvements[${index}] cited text that does not appear in the uploaded CV.`);
+    const evidenceOk = !normalizedText || !evidence || normalizedText.includes(evidence.toLowerCase().replace(/\s+/g, ' '));
     return {
       title: boundedText(item.title, `improvements[${index}].title`, 140),
       priority,
-      evidence,
+      evidence: evidenceOk ? evidence : '',
       whyItMatters: boundedText(item.whyItMatters, `improvements[${index}].whyItMatters`, 600, 10),
       suggestion: boundedText(item.suggestion, `improvements[${index}].suggestion`, 800, 10),
     };
