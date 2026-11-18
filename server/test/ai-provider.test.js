@@ -91,13 +91,14 @@ test('uses configured provider order for automatic fallback', async (t) => {
   assert.equal(result.fallbackUsed, false);
 });
 
-test('returns a clear error when neither provider has a configured key', async (t) => {
+test('returns a clear error when no provider has a configured key', async (t) => {
+  delete process.env.OPENCODE_API_KEY;
   delete process.env.GEMINI_API_KEY;
   delete process.env.OPENROUTER_API_KEY;
-  process.env.AI_PROVIDER_ORDER = 'openrouter,gemini';
+  process.env.AI_PROVIDER_ORDER = 'opencode,openrouter,gemini';
   t.after(restoreEnv);
-  await assert.rejects(runAiWithFallback('CV review', { openrouter: async () => {}, gemini: async () => {} }), {
+  await assert.rejects(runAiWithFallback('CV review', { opencode: async () => {}, openrouter: async () => {}, gemini: async () => {} }), {
     code: 'AI_NOT_CONFIGURED',
-    message: /OPENROUTER_API_KEY, GEMINI_API_KEY/,
+    message: /OPENCODE_API_KEY, OPENROUTER_API_KEY, or GEMINI_API_KEY/,
   });
 });

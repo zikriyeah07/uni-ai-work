@@ -1,6 +1,7 @@
 import { AppError } from '../utils/errors.js';
 import { logOpenRouterFailure, mapOpenRouterError, requestOpenRouter } from './openrouter-client.js';
 import { logGeminiFailure, mapGeminiError, requestGemini } from './gemini-client.js';
+import { logOpenCodeFailure, mapOpenCodeError, requestOpenCode } from './opencode-client.js';
 import { parseAiJson, responseWasTruncated, runAiWithFallback } from './ai-provider-fallback.js';
 
 const REQUEST_TIMEOUT_MS = 45_000;
@@ -28,7 +29,7 @@ const recommendationJsonSchema = {
     exampleCode: { type: 'STRING', description: 'A concise code example when useful, otherwise an empty string.' },
     evidenceRefs: { type: 'ARRAY', items: { type: 'STRING' }, minItems: 1, maxItems: 3 },
   },
-    required: ['category', 'priority', 'explanation', 'whyItMatters', 'action', 'exampleCode', 'evidenceRefs'],
+  required: ['category', 'priority', 'explanation', 'whyItMatters', 'action', 'exampleCode', 'evidenceRefs'],
 };
 
 const responseSchema = {
@@ -295,15 +296,15 @@ export async function generateAiAnalysis({ findings = [], pageFacts = {}, pageSp
     evidence: sources,
   };
   const aiRequest = {
-      messages: [
-        { role: 'system', content: systemInstruction },
-        { role: 'user', content: JSON.stringify(measured) },
-      ],
-      schemaName: 'site_audit_recommendations',
-      schema: responseSchema,
-      maxTokens: MAX_OUTPUT_TOKENS,
-      timeoutMs: REQUEST_TIMEOUT_MS,
-      allowPlainJsonFallback: true,
+    messages: [
+      { role: 'system', content: systemInstruction },
+      { role: 'user', content: JSON.stringify(measured) },
+    ],
+    schemaName: 'site_audit_recommendations',
+    schema: responseSchema,
+    maxTokens: MAX_OUTPUT_TOKENS,
+    timeoutMs: REQUEST_TIMEOUT_MS,
+    allowPlainJsonFallback: true,
   };
   const compactMeasured = {
     ...measured,
@@ -339,18 +340,25 @@ export async function generateAiAnalysis({ findings = [], pageFacts = {}, pageSp
     try {
       const responseProvider = provider === 'openrouter'
         ? (dependencies.requestOpenRouter ?? requestOpenRouter)
-        : (dependencies.requestGemini ?? requestGemini);
+        : provider === 'opencode'
+          ? (dependencies.requestOpenCode ?? requestOpenCode)
+          : (dependencies.requestGemini ?? requestGemini);
       const response = await responseProvider(aiRequest, dependencies);
-      if (provider === 'openrouter' && responseWasTruncated(response.finishReason)) {
+      if ((provider === 'openrouter' || provider === 'opencode') && responseWasTruncated(response.finishReason)) {
         const compactResponse = await responseProvider(compactAiRequest, dependencies);
-        return processResponse(compactResponse, 'OpenRouter');
+        return processResponse(compactResponse, provider === 'openrouter' ? 'OpenRouter' : 'OpenCode');
       }
-      return processResponse(response, provider === 'openrouter' ? 'OpenRouter' : 'Gemini');
+      const label = provider === 'openrouter' ? 'OpenRouter' : provider === 'opencode' ? 'OpenCode' : 'Gemini';
+      return processResponse(response, label);
     } catch (error) {
       if (error instanceof AppError) throw error;
       if (provider === 'openrouter') {
         logOpenRouterFailure('site-recommendations', error);
         throw mapOpenRouterError(error, 'SiteSense recommendations');
+      }
+      if (provider === 'opencode') {
+        logOpenCodeFailure('site-recommendations', error);
+        throw mapOpenCodeError(error, 'SiteSense recommendations');
       }
       logGeminiFailure('site-recommendations', error);
       throw mapGeminiError(error, 'SiteSense recommendations');
@@ -359,6 +367,7 @@ export async function generateAiAnalysis({ findings = [], pageFacts = {}, pageSp
 
   try {
     const result = await runAiWithFallback('SiteSense recommendations', {
+      opencode: () => callProvider('opencode'),
       openrouter: () => callProvider('openrouter'),
       gemini: () => callProvider('gemini'),
     });

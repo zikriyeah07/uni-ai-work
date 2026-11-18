@@ -2,6 +2,7 @@ import { CV_RESPONSE_SCHEMA, buildCvPrompt } from '../../../ai-cv-cheker/server/
 import { AppError } from '../utils/errors.js';
 import { logOpenRouterFailure, mapOpenRouterError, requestOpenRouter } from './openrouter-client.js';
 import { logGeminiFailure, mapGeminiError, requestGemini } from './gemini-client.js';
+import { logOpenCodeFailure, mapOpenCodeError, requestOpenCode } from './opencode-client.js';
 import { parseAiJson, responseWasTruncated, runAiWithFallback } from './ai-provider-fallback.js';
 
 const MAX_FILE_BYTES = 2.8 * 1024 * 1024;
@@ -31,7 +32,6 @@ export function validateCvRequest(body = {}) {
   const bytes = Buffer.from(base64, 'base64');
   if (!bytes.length || bytes.length > MAX_FILE_BYTES || bytes.toString('base64') !== base64) throw new AppError('The CV file is empty, invalid, or larger than 2.8 MB.', 413, 'INVALID_CV_SIZE');
   if (mimeType === 'application/pdf' && !bytes.subarray(0, 1024).includes(Buffer.from('%PDF-'))) throw new AppError('This file does not appear to be a valid PDF.', 400, 'INVALID_CV_FILE');
-  if (mimeType === 'text/plain' && !fileName.toLowerCase().endsWith('.txt')) throw new AppError('Plain text CV uploads must use a .txt file.', 400, 'INVALID_CV_FILE');
   if (typeof targetRole !== 'string' || targetRole.length > 120) throw new AppError('Target role must be 120 characters or fewer.', 400, 'INVALID_CV_REQUEST');
   const text = mimeType === 'text/plain' ? bytes.toString('utf8').replace(/\0/g, '').trim() : '';
   if (mimeType === 'text/plain' && text.length < 40) throw new AppError('This text file is too short to review. Add the CV content and try again.', 400, 'CV_TOO_SHORT');
@@ -41,30 +41,40 @@ export function validateCvRequest(body = {}) {
 
 export function validateCvAnalysis(value, sourceText = '') {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidResponse('the root value must be an object.');
-  const allowed = ['score', 'summary', 'strengths', 'improvements', 'nextSteps'];
-  if (Object.keys(value).some((key) => !allowed.includes(key))) throw invalidResponse('the response contained unexpected fields.');
-  if (!Number.isInteger(value.score) || value.score < 0 || value.score > 100) throw invalidResponse('score must be an integer from 0 to 100.');
-  if (!Array.isArray(value.strengths) || value.strengths.length > 4 || !Array.isArray(value.improvements) || value.improvements.length > 6 || !Array.isArray(value.nextSteps) || value.nextSteps.length > 4) throw invalidResponse('the response exceeded the allowed item counts.');
+  const score = Number.isInteger(value.score) ? value.score : Number.isFinite(Number(value.score)) ? Math.round(Number(value.score)) : NaN;
+  if (!Number.isInteger(score) || score < 0 || score > 100) throw invalidResponse('score must be an integer from 0 to 100.');
+  const strengthsIn = Array.isArray(value.strengths) ? value.strengths.slice(0, 4) : [];
+  const improvementsIn = Array.isArray(value.improvements) ? value.improvements.slice(0, 6) : [];
+  const nextStepsIn = Array.isArray(value.nextSteps) ? value.nextSteps.slice(0, 4) : [];
   const normalizedText = sourceText.toLowerCase().replace(/\s+/g, ' ');
-  const improvements = value.improvements.map((item, index) => {
-    if (!item || typeof item !== 'object' || Array.isArray(item) || Object.keys(item).some((key) => !['title', 'priority', 'evidence', 'whyItMatters', 'suggestion'].includes(key))) throw invalidResponse(`improvements[${index}] had an unexpected shape.`);
-    const evidence = typeof item.evidence === 'string' ? item.evidence.trim() : '';
-    if (evidence.length > 260 || !priorities.has(item.priority)) throw invalidResponse(`improvements[${index}] was invalid.`);
-    if (normalizedText && evidence && !normalizedText.includes(evidence.toLowerCase().replace(/\s+/g, ' '))) throw invalidResponse(`improvements[${index}] cited text that does not appear in the uploaded CV.`);
+  const improvements = improvementsIn.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) throw invalidResponse(`improvements[${index}] had an unexpected shape.`);
+    const evidence = typeof item.evidence === 'string' ? item.evidence.trim().slice(0, 260) : '';
+    const priority = priorities.has(item.priority) ? item.priority : 'Medium';
+    if (normalizedText && evidence && !normalizedText.includes(evidence.toLowerCase().replace(/\s+/g, ' '))) {
+      // keep improvement but drop unverifiable quote instead of failing the whole review
+      return {
+        title: boundedText(item.title, `improvements[${index}].title`, 140),
+        priority,
+        evidence: '',
+        whyItMatters: boundedText(item.whyItMatters, `improvements[${index}].whyItMatters`, 600, 10),
+        suggestion: boundedText(item.suggestion, `improvements[${index}].suggestion`, 800, 10),
+      };
+    }
     return {
       title: boundedText(item.title, `improvements[${index}].title`, 140),
-      priority: item.priority,
+      priority,
       evidence,
       whyItMatters: boundedText(item.whyItMatters, `improvements[${index}].whyItMatters`, 600, 10),
       suggestion: boundedText(item.suggestion, `improvements[${index}].suggestion`, 800, 10),
     };
   });
   return {
-    score: value.score,
+    score,
     summary: boundedText(value.summary, 'summary', 600, 10),
-    strengths: value.strengths.map((item, index) => boundedText(item, `strengths[${index}]`, 400, 5)),
+    strengths: strengthsIn.map((item, index) => boundedText(item, `strengths[${index}]`, 400, 5)),
     improvements,
-    nextSteps: value.nextSteps.map((item, index) => boundedText(item, `nextSteps[${index}]`, 300, 5)),
+    nextSteps: nextStepsIn.map((item, index) => boundedText(item, `nextSteps[${index}]`, 300, 5)),
   };
 }
 
@@ -100,15 +110,25 @@ export async function analyzeCv(body, dependencies = {}) {
 
   const callProvider = async (provider) => {
     try {
+      if (provider === 'opencode' && pdf) {
+        throw new AppError('PDF CVs need OpenRouter or Gemini with this app. Upload a .txt CV, or configure another AI provider for PDF analysis.', 400, 'CV_PDF_PROVIDER_UNSUPPORTED');
+      }
       const response = provider === 'openrouter'
         ? await (dependencies.requestOpenRouter ?? requestOpenRouter)(aiRequest, dependencies)
-        : await (dependencies.requestGemini ?? requestGemini)(aiRequest, dependencies);
-      return processResponse(response, provider === 'openrouter' ? 'OpenRouter' : 'Gemini');
+        : provider === 'opencode'
+          ? await (dependencies.requestOpenCode ?? requestOpenCode)(aiRequest, dependencies)
+          : await (dependencies.requestGemini ?? requestGemini)(aiRequest, dependencies);
+      const label = provider === 'openrouter' ? 'OpenRouter' : provider === 'opencode' ? 'OpenCode' : 'Gemini';
+      return processResponse(response, label);
     } catch (error) {
       if (error instanceof AppError) throw error;
       if (provider === 'openrouter') {
         logOpenRouterFailure('cv', error);
         throw mapOpenRouterError(error, 'CV analysis');
+      }
+      if (provider === 'opencode') {
+        logOpenCodeFailure('cv', error);
+        throw mapOpenCodeError(error, 'CV analysis');
       }
       logGeminiFailure('cv', error);
       throw mapGeminiError(error, 'CV analysis');
@@ -116,6 +136,7 @@ export async function analyzeCv(body, dependencies = {}) {
   };
 
   return runAiWithFallback('CV review', {
+    opencode: () => callProvider('opencode'),
     openrouter: () => callProvider('openrouter'),
     gemini: () => callProvider('gemini'),
   });

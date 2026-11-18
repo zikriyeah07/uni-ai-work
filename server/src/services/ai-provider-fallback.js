@@ -1,8 +1,10 @@
 import { AppError } from '../utils/errors.js';
 
-export const DEFAULT_AI_PROVIDER_ORDER = ['openrouter', 'gemini'];
+export const DEFAULT_AI_PROVIDER_ORDER = ['opencode', 'openrouter', 'gemini'];
+const KNOWN_PROVIDERS = ['opencode', 'openrouter', 'gemini'];
 
 const providerNames = {
+  opencode: 'OpenCode',
   openrouter: 'OpenRouter',
   gemini: 'Gemini',
 };
@@ -12,13 +14,14 @@ export function getAiProviderOrder() {
   if (!configured) return [...DEFAULT_AI_PROVIDER_ORDER];
 
   const order = configured.split(',').map((provider) => provider.trim().toLowerCase()).filter(Boolean);
-  if (!order.length || new Set(order).size !== order.length || order.some((provider) => !DEFAULT_AI_PROVIDER_ORDER.includes(provider))) {
-    throw new AppError('AI_PROVIDER_ORDER must list openrouter and/or gemini once each, separated by commas.', 503, 'AI_PROVIDER_ORDER_INVALID');
+  if (!order.length || new Set(order).size !== order.length || order.some((provider) => !KNOWN_PROVIDERS.includes(provider))) {
+    throw new AppError('AI_PROVIDER_ORDER must list opencode, openrouter, and/or gemini once each, separated by commas.', 503, 'AI_PROVIDER_ORDER_INVALID');
   }
   return order;
 }
 
 export function isAiProviderConfigured(provider) {
+  if (provider === 'opencode') return Boolean(process.env.OPENCODE_API_KEY?.trim());
   if (provider === 'openrouter') return Boolean(process.env.OPENROUTER_API_KEY?.trim());
   if (provider === 'gemini') return Boolean(process.env.GEMINI_API_KEY?.trim());
   return false;
@@ -29,9 +32,9 @@ export function configuredAiProviders() {
 }
 
 export async function runAiWithFallback(task, providers) {
-  const order = configuredAiProviders();
+  const order = configuredAiProviders().filter((provider) => typeof providers[provider] === 'function');
   if (!order.length) {
-    throw new AppError('No AI provider is configured. Set OPENROUTER_API_KEY, GEMINI_API_KEY, or both on the server.', 503, 'AI_NOT_CONFIGURED');
+    throw new AppError('No AI provider is configured. Set OPENCODE_API_KEY, OPENROUTER_API_KEY, or GEMINI_API_KEY on the server.', 503, 'AI_NOT_CONFIGURED');
   }
 
   const failures = [];
@@ -43,7 +46,7 @@ export async function runAiWithFallback(task, providers) {
         provider,
         fallbackUsed: failures.length > 0,
         warnings: failures.length
-          ? [`${providerNames[failures[0].provider]} did not respond; ${providerNames[provider]} provided the result.`]
+          ? [`${providerNames[failures[0].provider] || failures[0].provider} did not respond; ${providerNames[provider] || provider} provided the result.`]
           : [],
       };
     } catch (error) {
@@ -60,8 +63,8 @@ export async function runAiWithFallback(task, providers) {
   }
 
   if (failures.length === 1) throw failures[0].error;
-  const details = failures.map(({ provider, error }) => `${providerNames[provider]}: ${error?.message || 'request failed'}`).join(' ');
-  throw new AppError(`${task} failed with both configured AI providers. ${details}`, 502, 'AI_PROVIDERS_FAILED');
+  const details = failures.map(({ provider, error }) => `${providerNames[provider] || provider}: ${error?.message || 'request failed'}`).join(' ');
+  throw new AppError(`${task} failed with all configured AI providers. ${details}`, 502, 'AI_PROVIDERS_FAILED');
 }
 
 export function parseAiJson(text, task, provider) {
